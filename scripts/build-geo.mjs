@@ -16,7 +16,7 @@
 //   node scripts/build-geo.mjs            todo el mundo
 //   node scripts/build-geo.mjs NIC CRI    solo esos paises (el resto no se toca)
 
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,8 +97,19 @@ const ISO_ALIAS = { XKX: 'KOS' };
 const WORLD_URL =
   'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson';
 
-// Sobre la version ya simplificada de geoBoundaries, cuanto mas se conserva.
-const SIMPLIFY = { world: '12%', adm1: '35%', city: '35%' };
+// Sobre la version ya simplificada de geoBoundaries, cuanto mas se conserva
+// (en %). Si el archivo queda pesado se vuelve a simplificar mas fuerte, hasta
+// MIN_SIMPLIFY: el adm1 de Canada pesaba 4.2 MB por las islas del Artico.
+const SIMPLIFY = { world: '12%', adm1: 35, city: 35 };
+const MIN_SIMPLIFY = 3;
+const MAX_ADM1_BYTES = 800_000;
+const MAX_CITY_FILE_BYTES = 900_000;
+
+// Los lagos se restan de las divisiones: geoBoundaries reparte el lago de
+// Nicaragua entre los municipios con lineas rectas, y Granada se veia medio lago.
+const LAKES_URL =
+  'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_lakes.geojson';
+let lakesFile = null;
 
 // "El Viejo (Municipio)", "Municipio de Jinotega", "Matagalpa (Departemento)": la
 // fuente mezcla el tipo de division con el nombre, y a veces con faltas.
@@ -147,6 +158,20 @@ async function catalog(level) {
 
 const run = (cmd) => mapshaper.runCommands(cmd);
 
+// read: los comandos de entrada (-i, -each, -join...). Resta los lagos, simplifica
+// y escribe out. Mientras tooHeavy(bytes) diga que si, vuelve a simplificar mas
+// fuerte. Lo que quedo entero dentro de un lago (sin geometria) se descarta.
+async function shape(read, out, pct, tooHeavy) {
+  for (let p = pct; ; p = Math.max(MIN_SIMPLIFY, Math.round(p * 0.55))) {
+    await run(
+      `${read} -erase "${lakesFile}" -filter "!this.isNull" ` +
+        `-simplify ${p}% keep-shapes -o "${out}" format=geojson precision=0.0001`,
+    );
+    const bytes = (await stat(out)).size;
+    if (p <= MIN_SIMPLIFY || !(await tooHeavy(bytes))) return p;
+  }
+}
+
 async function readFeatures(file) {
   return JSON.parse(await readFile(file, 'utf8')).features;
 }
@@ -186,11 +211,17 @@ async function buildCountry(src, cfg, cat) {
 
   const adm1Src = await download(cat[l1][src].simplifiedGeometryGeoJSON, `${src}-${l1}.geojson`);
   const adm1Tmp = join(CACHE, `${src}-adm1-out.json`);
-  await run(
-    `-i "${adm1Src}" -each "gbid = shapeID, name = shapeName" -filter-fields gbid,name ` +
-      `-simplify ${SIMPLIFY.adm1} keep-shapes -o "${adm1Tmp}" format=geojson precision=0.0001`,
+  // Una lectura sin simplificar para cruzar las ciudades: el cruce se hace con
+  // la forma real, no con la que quedo despues de aligerar.
+  const adm1Join = join(CACHE, `${src}-adm1-join.json`);
+  await run(`-i "${adm1Src}" -each "gbid = shapeID" -filter-fields gbid -o "${adm1Join}" format=geojson`);
+  await shape(
+    `-i "${adm1Src}" -each "gbid = shapeID, name = shapeName" -filter-fields gbid,name`,
+    adm1Tmp,
+    SIMPLIFY.adm1,
+    (bytes) => bytes > MAX_ADM1_BYTES,
   );
-  const adm1 = await readFeatures(adm1Tmp);
+  const adm1 = (await readFeatures(adm1Tmp)).filter((f) => f.geometry);
   const adm1Label = await withLabelPoints(adm1Tmp);
   const seen1 = new Set();
   const adm1Id = new Map();
@@ -210,10 +241,19 @@ async function buildCountry(src, cfg, cat) {
     const cityTmp = join(CACHE, `${src}-city-out.json`);
     // largest-overlap y no point-method: un municipio costero puede tener su punto
     // interior en una isla que el departamento simplificado ya no tiene.
-    await run(
+    // El tope va por departamento (lo que se baja al abrirlo), no por pais.
+    const heaviestGroup = (file) =>
+      readFeatures(file).then((fs) => {
+        const size = new Map();
+        for (const f of fs) size.set(f.properties.p_gbid, (size.get(f.properties.p_gbid) ?? 0) + JSON.stringify(f).length);
+        return Math.max(0, ...size.values());
+      });
+    await shape(
       `-i "${citySrc}" -each "gbid = shapeID, name = shapeName" -filter-fields gbid,name ` +
-        `-join "${adm1Tmp}" largest-overlap fields=gbid prefix=p_ ` +
-        `-simplify ${SIMPLIFY.city} keep-shapes -o "${cityTmp}" format=geojson precision=0.0001`,
+        `-join "${adm1Join}" largest-overlap fields=gbid prefix=p_`,
+      cityTmp,
+      SIMPLIFY.city,
+      async () => (await heaviestGroup(cityTmp)) > MAX_CITY_FILE_BYTES,
     );
     const cityLabel = await withLabelPoints(cityTmp);
     const seen = new Set();
@@ -274,6 +314,17 @@ async function pool(items, n, fn) {
 
 await mkdir(CACHE, { recursive: true });
 await mkdir(GEO, { recursive: true });
+
+// Solo los lagos grandes (> 50 km2: los que se notan a esta escala) y ya
+// aligerados: con la orilla completa, cada departamento sumaba miles de puntos
+// (Nicaragua pasaba de 125 KB a 500 KB).
+lakesFile = join(CACHE, 'lakes-simple.json');
+if (!existsSync(lakesFile)) {
+  await run(
+    `-i "${await download(LAKES_URL, 'lakes-10m.geojson')}" -filter "this.area > 50e6" -filter-fields name ` +
+      `-simplify 8% keep-shapes -o "${lakesFile}" format=geojson precision=0.0001`,
+  );
+}
 
 const only = process.argv.slice(2).map((s) => s.toUpperCase());
 if (!only.length) await buildWorld();
