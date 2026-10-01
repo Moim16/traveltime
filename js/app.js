@@ -14,7 +14,7 @@ import { KINDS, kindOf, toGeoJSON, pinForm, pinCard } from './pins.js';
 import { esc, toast, ask, busy, formatRange } from './ui.js';
 import { renderStory } from './story.js';
 import { openWriter, closeWriter } from './editor.js';
-import { renderHome, renderPublicVisit, renderTrip, tripForm, closePage, wantToGo, beenThere } from './pages.js';
+import { renderHome, renderPublicVisit, renderTrip, tripForm, closePage, wantToGo, beenThere, invitesHtml, respondInvite } from './pages.js';
 import { BASEMAPS, currentBasemap, setBasemap, tintBasemap } from './basemap.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -305,7 +305,8 @@ function openPinPopup(id, { fly: doFly = false } = {}) {
   if (doFly) map.flyTo({ center: [pin.lng, pin.lat], zoom: Math.max(map.getZoom(), 15), padding: padding(), duration: 700 });
   popup = new maplibregl.Popup({ offset: 14, maxWidth: '290px', className: 'pin-popup' })
     .setLngLat([pin.lng, pin.lat])
-    .setHTML(pinCard(pin, { inVisit: state.visit === pin.visitId }))
+    // Editar/mover/borrar solo en mi propia visita, no en la de un compañero.
+    .setHTML(pinCard(pin, { inVisit: state.visit === pin.visitId && currentVisit?.id === pin.visitId && currentVisit?.mine !== false }))
     .addTo(map);
   popup.on('close', () => map.getSource('pins') && map.setFeatureState({ source: 'pins', id }, { selected: false }));
 }
@@ -330,7 +331,7 @@ function renderPinList() {
   const mine = pinsData.filter((p) => p.visitId === state.visit);
   box.innerHTML =
     `<div class="visits-head"><h2>Lugares${mine.length ? ` <span class="count">${mine.length}</span>` : ''}</h2>` +
-    `<button class="primary small" data-pin-add>+ Lugar</button></div>` +
+    (currentVisit?.mine === false ? '</div>' : `<button class="primary small" data-pin-add>+ Lugar</button></div>`) +
     (mine.length
       ? '<ul class="pin-list">' +
         mine
@@ -340,7 +341,9 @@ function renderPinList() {
           })
           .join('') +
         '</ul>'
-      : '<p class="note">Marca dónde estuviste: el restaurante, el mirador, el hotel. Tocas el mapa, usas tu ubicación o lo sacas de una foto.</p>');
+      : currentVisit?.mine === false
+        ? '<p class="note">Sin lugares marcados.</p>'
+        : '<p class="note">Marca dónde estuviste: el restaurante, el mirador, el hotel. Tocas el mapa, usas tu ubicación o lo sacas de una foto.</p>');
 }
 
 function startPicking(mode) {
@@ -463,17 +466,24 @@ const wishGeo = () => ({
 });
 async function loadWishes() {
   try {
-    [wishesData, tripsData] = account.current()
-      ? await Promise.all([api('wishes').then((r) => r.wishes), api('trips').then((r) => r.trips)])
-      : [[], []];
+    [wishesData, tripsData, invitesData] = account.current()
+      ? await Promise.all([
+          api('wishes').then((r) => r.wishes),
+          api('trips').then((r) => r.trips),
+          api('trips', { query: { invites: 1 } }).then((r) => r.invites),
+        ])
+      : [[], [], []];
   } catch {
     wishesData = [];
     tripsData = [];
+    invitesData = [];
   }
   map.getSource('wishes')?.setData(wishGeo());
 }
 // Mis viajes (para el selector de cada visita y el panel del mundo). Se cargan con "Quiero ir".
 let tripsData = [];
+// Invitaciones a viajes que me esperan (de compañeros).
+let invitesData = [];
 const wishFor = (placeId) => wishesData.find((w) => w.placeId === placeId && w.lat == null);
 
 // ---------- Navegacion ----------
@@ -528,7 +538,7 @@ async function show(route) {
     pinsKey = '';
     pinsData = [];
     map.getSource('pins')?.setData(EMPTY);
-    renderHome({ go, countVisited: () => world.features.filter((f) => visits.has(f.properties.iso)).length, wishes: () => wishesData });
+    renderHome({ go, countVisited: () => world.features.filter((f) => visits.has(f.properties.iso)).length, wishes: () => wishesData, invites: () => invitesData });
     spin(true);
     return;
   }
@@ -698,7 +708,7 @@ function renderPanel() {
     panel.innerHTML =
       kindLine('Mundo') + '<h1>Tu mapa</h1>' +
       (account.current()
-        ? `<div class="big"><b>${visited.length}</b> ${visited.length === 1 ? 'país visitado' : 'países visitados'}</div>` +
+        ? invitesHtml(invitesData) + `<div class="big"><b>${visited.length}</b> ${visited.length === 1 ? 'país visitado' : 'países visitados'}</div>` +
           (visited.length ? list(visited.map((f) => ({ properties: { id: f.properties.iso, name: f.properties.name } }))) : '') +
           '<p class="note">Toca un país en el globo o búscalo arriba.</p>' +
           (wishesData.length
@@ -710,7 +720,7 @@ function renderPanel() {
           `<div class="visits-head"><h2>Tus viajes${tripsData.length ? ` <span class="count">${tripsData.length}</span>` : ''}</h2><button class="secondary small" data-trip-new>+ Viaje</button></div>` +
           (tripsData.length
             ? `<ul class="cards">${tripsData
-                .map((t) => `<li><a class="card${t.cover ? ' with-cover' : ''}" href="#/viaje/${t.id}">${t.cover ? `<img class="card-cover" src="${esc(t.cover)}" alt="" loading="lazy">` : ''}<span class="card-title">🧳 ${esc(t.title)}</span><span class="card-sub">${esc(formatRange(t.startDay, t.endDay))} · ${t.visitCount} ${t.visitCount === 1 ? 'visita' : 'visitas'}${t.publishedAt ? ' · 🌎' : ''}</span></a></li>`)
+                .map((t) => `<li><a class="card${t.cover ? ' with-cover' : ''}" href="#/viaje/${t.id}">${t.cover ? `<img class="card-cover" src="${esc(t.cover)}" alt="" loading="lazy">` : ''}<span class="card-title">🧳 ${esc(t.title)}${t.role === 'member' ? ' <span class="badge">👥 compartido</span>' : ''}</span><span class="card-sub">${esc(formatRange(t.startDay, t.endDay))} · ${t.visitCount} ${t.visitCount === 1 ? 'visita' : 'visitas'}${t.publishedAt ? ' · 🌎' : ''}</span></a></li>`)
                 .join('')}</ul>`
             : '<p class="note">Agrupa tus visitas en viajes: una línea de tiempo con su ruta en el mapa.</p>')
         : `<p class="note">Recorre el mundo, marca los lugares donde estuviste y escribe lo que hiciste en cada uno.</p>
@@ -852,6 +862,24 @@ async function renderVisit(panel) {
   refreshPhotoPoints();
 
   const story = renderStory(v.body, { photos: new Map(photos.map((p) => [p.id, p])), pins: new Map(pins.map((p) => [p.id, p])) });
+
+  // La visita de un compañero de viaje: se lee, no se toca.
+  if (v.mine === false) {
+    gallery.readOnly = true;
+    panel.innerHTML =
+      back +
+      kindLine(formatRange(v.startDay, v.endDay)) +
+      `<h1>${esc(v.title)}</h1>` +
+      `<p class="shared-note">👥 De <b>@${esc(v.author)}</b>${v.tripId ? ` · <a class="link" href="#/viaje/${v.tripId}">del viaje que comparten</a>` : ''}. La ves porque viajaron juntos; solo @${esc(v.author)} la puede cambiar.</p>` +
+      `<article class="story">${story || '<p class="note">Sin relato todavía.</p>'}</article>` +
+      `<section class="gallery" id="gallery" aria-label="Fotos"></section>` +
+      `<section class="pins" id="pins" aria-label="Lugares"></section>`;
+    paintGallery($('#gallery'));
+    renderPinList();
+    if (state.edit) go(`${place}/v/${v.id}`); // nadie escribe la visita de otro
+    return;
+  }
+
   const fromPhotos = photoDates(photos);
   const suggest = fromPhotos && (fromPhotos.start !== v.startDay || (fromPhotos.end ?? null) !== (v.endDay ?? null));
   panel.innerHTML =
@@ -980,7 +1008,7 @@ function paintGallery(box, uploading = []) {
   const n = gallery.photos.length;
   box.innerHTML =
     `<div class="visits-head"><h2>Fotos${n ? ` <span class="count">${n}</span>` : ''}</h2>` +
-    `<label class="primary small add-photo">+ Agregar<input type="file" accept="image/*" multiple hidden data-add-photos></label></div>` +
+    (gallery.readOnly ? '</div>' : `<label class="primary small add-photo">+ Agregar<input type="file" accept="image/*" multiple hidden data-add-photos></label></div>`) +
     (n || uploading.length
       ? `<div class="grid">` +
         gallery.photos
@@ -988,7 +1016,9 @@ function paintGallery(box, uploading = []) {
           .join('') +
         uploading.map((u) => `<div class="tile uploading ${u.state === 'error' ? 'err' : ''}" data-up="${u.i}"><span>${esc(UPLOAD_LABEL[u.state])}</span></div>`).join('') +
         `</div>`
-      : `<p class="note">Agrega las fotos de esta visita. Se achican en tu teléfono antes de subir, y la fecha y el lugar donde se tomaron quedan guardados aparte, solo para ti.</p>`);
+      : gallery.readOnly
+        ? '<p class="note">Sin fotos.</p>'
+        : `<p class="note">Agrega las fotos de esta visita. Se achican en tu teléfono antes de subir, y la fecha y el lugar donde se tomaron quedan guardados aparte, solo para ti.</p>`);
 }
 
 const UPLOAD_LABEL = { esperando: 'En espera', preparando: 'Preparando…', subiendo: 'Subiendo…', lista: 'Lista', error: 'Falló' };
@@ -1135,12 +1165,12 @@ document.addEventListener('click', async (e) => {
   const nav = e.target.closest('[data-go]');
   if (nav && !nav.hasAttribute('aria-current')) return go(nav.dataset.go || null);
   const photo = e.target.closest('[data-photo]');
-  if (photo) return openPhoto(Number(photo.dataset.photo));
+  if (photo) return openPhoto(Number(photo.dataset.photo), { readOnly: Boolean(gallery.readOnly) });
   // Una foto dentro del relato abre la misma vista en grande, en su lugar de la galeria.
   const storyPhoto = e.target.closest('[data-story-photo]');
   if (storyPhoto && !storyPhoto.closest('.page')) {
     const i = gallery.photos.findIndex((p) => p.id === Number(storyPhoto.dataset.storyPhoto));
-    if (i >= 0) openPhoto(i);
+    if (i >= 0) openPhoto(i, { readOnly: Boolean(gallery.readOnly) });
     return;
   }
   const auth = e.target.closest('[data-auth]');
@@ -1215,6 +1245,12 @@ document.addEventListener('click', async (e) => {
     await loadWishes();
     go(`viaje/${t.id}`);
   }
+});
+
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-invite]');
+  if (!b || e.target.closest('.page')) return;
+  await respondInvite(Number(b.dataset.invite), b.dataset.accept === '1', go);
 });
 
 // ---------- Publicar y "Quiero ir" (en el panel) ----------
@@ -1407,7 +1443,10 @@ q.addEventListener('blur', () => setTimeout(() => { hits = []; paintResults(); }
 addEventListener('tt:data-changed', async () => {
   await Promise.all([visits.refresh().catch(() => {}), loadWishes()]);
   applyStates();
+  dispatchEvent(new Event('tt:data-loaded')); // quien lo pidio sabe que ya esta al dia
 });
+// Rehacer lo que se esta viendo (al rechazar una invitacion, por ejemplo).
+addEventListener('tt:rerender', () => show(parseRoute(location.hash)));
 
 // ---------- Arranque ----------
 

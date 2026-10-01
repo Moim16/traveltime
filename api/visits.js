@@ -22,6 +22,7 @@ import { currentUser, deny, notYours } from './_lib/auth.js';
 import { imagesReady, signedUrl } from './_lib/images.js';
 import { removePhotos } from './_lib/photos.js';
 import { parseStory, readStory } from './_lib/story.js';
+import { readableVisit } from './_lib/trips.js';
 
 const TITLE_MAX = 120;
 
@@ -71,8 +72,10 @@ export default async function handler(req, res) {
     const q = req.query ?? {};
 
     if (req.method === 'GET' && q.id) {
-      const v = await mine(me.id, parseId(q.id));
-      return v ? res.status(200).json({ visit: ownVisit(v, true) }) : notYours(res);
+      // Mia, o de un viaje donde soy compañero (de lectura: mine=false).
+      const r = await readableVisit(me.id, parseId(q.id));
+      if (!r) return notYours(res);
+      return res.status(200).json({ visit: { ...ownVisit(r.visit, true), author: r.visit.author, mine: r.mine } });
     }
 
     if (req.method === 'GET') {

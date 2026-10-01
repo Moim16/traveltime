@@ -17,6 +17,7 @@ import { readJson, clean, parseId } from './_lib/http.js';
 import { currentUser, deny, notYours } from './_lib/auth.js';
 import { imagesReady, directUpload, isUploaded, signedUrl } from './_lib/images.js';
 import { removePhotos } from './_lib/photos.js';
+import { readableVisit } from './_lib/trips.js';
 
 const FOTOS_POR_USUARIO = 2000;
 const FOTOS_POR_VISITA = 150;
@@ -77,12 +78,14 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       const visitId = parseId(q.visit);
-      if (!visitId || !(await visitOf(me.id, visitId))) return notYours(res);
+      const r = await readableVisit(me.id, visitId);
+      if (!r) return notYours(res);
       const rs = await db.execute({
-        sql: "SELECT * FROM photos WHERE visitId = ? AND userId = ? AND status = 'ready' ORDER BY position, COALESCE(takenAt, createdAt), id",
-        args: [visitId, me.id],
+        sql: "SELECT * FROM photos WHERE visitId = ? AND status = 'ready' ORDER BY position, COALESCE(takenAt, createdAt), id",
+        args: [visitId],
       });
-      return res.status(200).json({ photos: rs.rows.map(publicPhoto) });
+      // Un compañero ve las fotos, pero el GPS sigue siendo solo del dueño.
+      return res.status(200).json({ photos: rs.rows.map((p) => (r.mine ? publicPhoto(p) : { ...publicPhoto(p), lat: null, lng: null })) });
     }
 
     if (req.method === 'POST' && q.upload) {

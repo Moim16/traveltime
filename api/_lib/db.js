@@ -208,6 +208,20 @@ async function initSchema() {
     /* ya existe */
   }
   await db.execute('CREATE INDEX IF NOT EXISTS idx_visits_trip ON visits (tripId) WHERE tripId IS NOT NULL');
+
+  // Compañeros de viaje. El dueño es trips.userId (no esta aqui). Un compañero
+  // invitado ('invited') todavia no ve nada; al aceptar ('accepted') ve todas
+  // las visitas del viaje (de lectura) y puede meter las suyas.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS trip_members (
+      tripId    INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status    TEXT NOT NULL DEFAULT 'invited',
+      invitedBy INTEGER NOT NULL,
+      createdAt TEXT NOT NULL,
+      PRIMARY KEY (tripId, userId)
+    )`);
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_trip_members_user ON trip_members (userId, status)');
 }
 
 // Alfabeto sin caracteres que se confundan (nada de I, O, 0, 1).

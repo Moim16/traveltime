@@ -81,6 +81,30 @@ export async function beenThere({ pinId, title, go }) {
   }
 }
 
+// Invitaciones a viajes: "@moises te invito a «Centroamerica 2025»".
+export const invitesHtml = (invites) =>
+  invites.length
+    ? `<div class="invites">${invites
+        .map((i) => `<div class="invite"><span>🔔 <b>@${esc(i.invitedBy)}</b> te invitó a su viaje <b>«${esc(i.title)}»</b>. Si aceptas, verás las visitas de ese viaje y podrás sumar las tuyas.</span>
+          <span class="invite-actions"><button class="primary small" data-invite="${i.tripId}" data-accept="1">Aceptar</button><button class="link" data-invite="${i.tripId}" data-accept="0">Rechazar</button></span></div>`)
+        .join('')}</div>`
+    : '';
+
+export async function respondInvite(tripId, accept, go) {
+  try {
+    await api('trips', { method: 'POST', query: { id: tripId, respond: 1 }, body: { accept } });
+    toast(accept ? 'Ya son compañeros de viaje.' : 'Invitación rechazada.');
+    await new Promise((r) => {
+      addEventListener('tt:data-loaded', r, { once: true });
+      changed();
+    });
+    if (accept) go(`viaje/${tripId}`);
+    else dispatchEvent(new Event('tt:rerender'));
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
 const authorLine = (a) => `<span class="author"><span class="avatar-sm" aria-hidden="true">${esc((a ?? '?').charAt(0).toUpperCase())}</span>@${esc(a)}</span>`;
 const placeShort = (pn) => (pn ?? '').split(',').filter((_, i, all) => i === 0 || i === all.length - 1).join(', ');
 
@@ -109,7 +133,7 @@ function placeChip(p, i) {
 
 // ---------- Portada ----------
 
-export async function renderHome({ go, countVisited, wishes }) {
+export async function renderHome({ go, countVisited, wishes, invites = () => [] }) {
   const el = openPage('home');
   const me = account.current();
   el.innerHTML = `
@@ -132,7 +156,7 @@ export async function renderHome({ go, countVisited, wishes }) {
       <div><p class="eyebrow">Tu mapa</p><h2>Hola, ${esc(me.fullName || me.name)}</h2></div>
       <div class="mine-stats"><div><b>${countVisited()}</b><span>países visitados</span></div><div><b id="home-wish-count">${wishes().length}</b><span>quiero ir</span></div></div>
       <a class="secondary" href="#/mundo">Ver mi mapa →</a>
-    </div></section>` : ''}
+    </div>${invites().length ? `<div class="wrap">${invitesHtml(invites())}</div>` : ''}</section>` : ''}
 
     <section class="band" id="como"><div class="wrap">
       <p class="eyebrow reveal">Cómo funciona</p>
@@ -173,6 +197,12 @@ export async function renderHome({ go, countVisited, wishes }) {
   const offInstall = onInstallChange(syncInstall);
   installBtn.addEventListener('click', install);
   page.cleanup = () => (io?.disconnect(), offInstall());
+
+  // Antes de pedir las recomendaciones: si esa carga falla, aceptar igual funciona.
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-invite]');
+    if (b) respondInvite(Number(b.dataset.invite), b.dataset.accept === '1', go);
+  });
 
   el.querySelector('.scroll-hint').addEventListener('click', (e) => {
     e.preventDefault();
@@ -244,14 +274,15 @@ export async function renderTrip(id, { go, isPublic }) {
       </div>
     </header>
     <div class="article-body wrap-narrow">
-      ${isPublic ? '' : `<div class="trip-owner">
+      ${isPublic ? '' : t.role === 'owner' ? `<div class="trip-owner">
         <button class="secondary" data-trip-edit>✎ Renombrar</button>
         ${t.publishedAt
           ? `<span class="publish on"><span>🌎 <b>Publicado</b></span><a class="link" href="#/t/${t.id}">Ver página pública</a><button class="link" data-trip-publish="0">Dejar de publicar</button></span>`
           : '<button class="secondary" data-trip-publish="1">🌎 Publicar viaje</button>'}
         <button class="danger-link" data-trip-delete>Borrar viaje</button>
-      </div>`}
+      </div>` : `<div class="trip-owner"><span class="shared-note">👥 Viaje de <b>@${esc(t.members.find((m) => m.role === 'owner')?.name ?? '')}</b>, compartido contigo. Puedes sumar tus visitas desde cada una, en «🧳 Viaje».</span></div>`}
       ${t.summary ? `<p class="trip-summary">${esc(t.summary)}</p>` : ''}
+      ${isPublic ? '' : membersHtml(t)}
       ${t.visits.length ? `<div class="mini-map trip-map" id="trip-map"></div>` : ''}
       ${t.visits.length
         ? `<ol class="timeline">${t.visits
@@ -259,7 +290,7 @@ export async function renderTrip(id, { go, isPublic }) {
               <a class="tl-card" href="${visitHref(v)}">
                 ${v.cover ? `<img src="${esc(v.cover)}" alt="" loading="lazy">` : '<span class="tl-nocover">📍</span>'}
                 <span class="tl-body"><small>${esc(formatRange(v.startDay, v.endDay))}</small><b>${esc(v.title)}</b>
-                <span>${esc(placeShort(v.placeName))}${v.photoCount ? ` · 📷 ${v.photoCount}` : ''}${!isPublic && v.publishedAt ? ' · 🌎' : ''}</span></span>
+                <span>${esc(placeShort(v.placeName))}${v.photoCount ? ` · 📷 ${v.photoCount}` : ''}${!isPublic && v.publishedAt ? ' · 🌎' : ''}${v.mine === false || (isPublic && v.author !== t.author) ? ` · @${esc(v.author)}` : ''}</span></span>
               </a></li>`)
             .join('')}</ol>`
         : `<div class="empty"><span>🧳</span><p>${isPublic ? 'Este viaje todavía no tiene visitas publicadas.' : 'Este viaje todavía no tiene visitas. En cada visita, elige este viaje en «🧳 Viaje».'}</p></div>`}
@@ -295,6 +326,22 @@ export async function renderTrip(id, { go, isPublic }) {
   }
   page.cleanup = () => (io?.disconnect(), map?.remove(), (map = null));
 
+  el.addEventListener('submit', async (e) => {
+    const form = e.target.closest('[data-invite-form]');
+    if (!form) return;
+    e.preventDefault();
+    const name = form.name.value.trim().replace(/^@/, '');
+    if (!name) return;
+    if (!(await ask({ title: `¿Invitar a @${name}?`, text: `Si acepta, verá todas las visitas de «${t.title}», con sus fotos y lugares (sin el GPS de las fotos), y podrá sumar las suyas.`, ok: 'Invitar' }))) return;
+    try {
+      await api('trips', { method: 'POST', query: { id: t.id, invite: 1 }, body: { name } });
+      toast(`Invitación enviada a @${name}. La verá al entrar.`);
+      renderTrip(id, { go, isPublic });
+    } catch (ex) {
+      toast(ex.message, 'err');
+    }
+  });
+
   el.addEventListener('click', async (e) => {
     if (e.target.closest('[data-share]')) {
       try {
@@ -304,6 +351,33 @@ export async function renderTrip(id, { go, isPublic }) {
       return;
     }
     if (isPublic) return;
+    const rerender = () => renderTrip(id, { go, isPublic });
+    const remove = e.target.closest('[data-member-remove]');
+    if (remove) {
+      const name = remove.dataset.memberRemove;
+      if (!(await ask({ title: `¿Sacar a @${name} del viaje?`, text: `Dejará de ver las visitas del viaje. Sus propias visitas siguen siendo suyas: solo salen de este viaje.`, ok: 'Sacar', danger: true }))) return;
+      try {
+        await api('trips', { method: 'DELETE', query: { id: t.id, member: name } });
+        toast(`@${name} ya no está en el viaje.`);
+        rerender();
+      } catch (ex) {
+        toast(ex.message, 'err');
+      }
+      return;
+    }
+    if (e.target.closest('[data-member-leave]')) {
+      if (!(await ask({ title: '¿Salir de este viaje?', text: 'Dejarás de ver las visitas de los demás. Las tuyas siguen siendo tuyas: solo salen de este viaje.', ok: 'Salir', danger: true }))) return;
+      try {
+        await api('trips', { method: 'DELETE', query: { id: t.id, member: account.current().name } });
+        toast('Saliste del viaje.');
+        changed();
+        go(null);
+      } catch (ex) {
+        toast(ex.message, 'err');
+      }
+      return;
+    }
+    if (t.role !== 'owner') return; // lo de abajo es solo del dueño (el servidor igual lo rechaza)
     if (e.target.closest('[data-trip-edit]')) {
       const saved = await tripForm(t);
       if (saved) renderTrip(id, { go, isPublic });
@@ -334,6 +408,24 @@ export async function renderTrip(id, { go, isPublic }) {
       }
     }
   });
+}
+
+// Compañeros del viaje: el dueño invita y saca; un compañero puede salirse.
+function membersHtml(t) {
+  const me = account.current()?.name;
+  const owner = t.role === 'owner';
+  const chips = t.members
+    .map((m) => {
+      const label = m.role === 'owner' ? 'creó el viaje' : m.status === 'invited' ? 'invitación enviada' : 'compañero';
+      const remove = owner && m.role !== 'owner'
+        ? `<button class="link danger-link" data-member-remove="${esc(m.name)}" aria-label="Sacar a @${esc(m.name)}">✕</button>`
+        : !owner && m.name === me ? '<button class="link danger-link" data-member-leave>Salir del viaje</button>' : '';
+      return `<li class="member ${m.status === 'invited' ? 'pending' : ''}"><span class="avatar-sm">${esc(m.name.charAt(0).toUpperCase())}</span><span><b>@${esc(m.name)}</b><small>${label}</small></span>${remove}</li>`;
+    })
+    .join('');
+  return `<section class="members"><h2>Compañeros</h2><ul class="member-list">${chips}</ul>
+    ${owner ? `<form class="invite-form" data-invite-form><input name="name" placeholder="@usuario de tu compañero" autocomplete="off" autocapitalize="none" required aria-label="Usuario a invitar"><button class="primary small">Invitar</button></form>
+      <p class="note">Quien acepte verá todas las visitas de este viaje (con sus fotos y lugares, sin el GPS de las fotos) y podrá sumar las suyas. No podrá cambiar las tuyas ni el viaje.</p>` : ''}</section>`;
 }
 
 // Nombre y resumen de un viaje. Sin trip: uno nuevo (con visitId, la mete de una vez).

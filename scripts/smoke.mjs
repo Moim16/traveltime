@@ -367,6 +367,58 @@ check('la visita publicada sabe de su viaje publicado', (await pub({ visit: leon
 await call('trips', 'PUT', { token: A, query: { id: T, publish: 1 }, body: { published: false } });
 check('si el viaje se despublica, la visita ya no lo nombra', (await pub({ visit: leon.id })).data.visit.trip === null);
 
+// ---------------------------------------------------------------- compañeros de viaje
+check('invitar a alguien que no existe', (await call('trips', 'POST', { token: A, query: { id: T, invite: 1 }, body: { name: 'nadie' } })).status === 404);
+check('invitarse a si mismo', (await call('trips', 'POST', { token: A, query: { id: T, invite: 1 }, body: { name: 'moises' } })).status === 400);
+check('solo el dueño invita', (await call('trips', 'POST', { token: B, query: { id: T, invite: 1 }, body: { name: 'otra' } })).status === 404);
+const inv = await call('trips', 'POST', { token: A, query: { id: T, invite: 1 }, body: { name: '@OTRA' } });
+check('invitar por usuario (con @ y sin importar mayusculas)', inv.status === 201 && inv.data.members.some((m) => m.name === 'otra' && m.status === 'invited'), inv.data);
+check('invitar dos veces', (await call('trips', 'POST', { token: A, query: { id: T, invite: 1 }, body: { name: 'otra' } })).status === 409);
+const invitesB = (await call('trips', 'GET', { token: B, query: { invites: 1 } })).data.invites;
+check('la invitada ve su invitacion, con quien invita', invitesB.length === 1 && invitesB[0].tripId === T && invitesB[0].invitedBy === 'moises', invitesB);
+check('invitada sin aceptar: todavia no ve el viaje (404)', (await call('trips', 'GET', { token: B, query: { id: T } })).status === 404);
+check('...ni las visitas del viaje (404)', (await call('visits', 'GET', { token: B, query: { id: V1 } })).status === 404);
+check('otro no puede aceptar por ella', (await call('trips', 'POST', { token: A, query: { id: T, respond: 1 }, body: { accept: true } })).status === 404);
+
+const acc = await call('trips', 'POST', { token: B, query: { id: T, respond: 1 }, body: { accept: true } });
+check('aceptar', acc.status === 200 && acc.data.trip.role === 'member', acc.data);
+check('el viaje aparece en sus viajes, como compañera', (await call('trips', 'GET', { token: B })).data.trips.some((t) => t.id === T && t.role === 'member'));
+const asB = (await call('trips', 'GET', { token: B, query: { id: T } })).data.trip;
+check('la compañera ve las visitas del viaje, con su autor', asB.visits.some((v) => v.id === V1 && v.author === 'moises' && v.mine === false), asB.visits);
+const vB = await call('visits', 'GET', { token: B, query: { id: V1 } });
+check('la compañera lee la visita (marcada como ajena)', vB.status === 200 && vB.data.visit.mine === false && vB.data.visit.author === 'moises', vB.data);
+const phB = (await call('photos', 'GET', { token: B, query: { visit: V1 } })).data.photos;
+check('la compañera ve las fotos...', phB.length === 1);
+check('...pero no su GPS (es solo del dueño)', phB[0].lat === null && phB[0].lng === null, phB[0]);
+check('el dueño si ve su GPS', (await call('photos', 'GET', { token: A, query: { visit: V1 } })).data.photos[0].lat === 11.93);
+check('la compañera ve los lugares de la visita', (await call('pins', 'GET', { token: B, query: { visit: V1 } })).data.pins.length >= 1);
+check('la compañera no edita la visita ajena (404)', (await call('visits', 'PUT', { token: B, query: { id: V1 }, body: { title: 'x' } })).status === 404);
+check('...ni la borra (404)', (await call('visits', 'DELETE', { token: B, query: { id: V1 } })).status === 404);
+check('...ni la publica (404)', (await call('visits', 'PUT', { token: B, query: { id: V1, publish: 1 }, body: { published: true } })).status === 404);
+check('...ni le sube fotos (404)', (await call('photos', 'POST', { token: B, query: { upload: 1 }, body: { visitId: V1 } })).status === 404);
+check('...ni le pone lugares (404)', (await call('pins', 'POST', { token: B, body: { visitId: V1, name: 'x', lat: 11, lng: -85 } })).status === 404);
+check('...ni la saca del viaje (404)', (await call('trips', 'PUT', { token: B, query: { id: T, visit: V1 }, body: { in: false } })).status === 404);
+check('la compañera no renombra el viaje (403)', (await call('trips', 'PUT', { token: B, query: { id: T }, body: { title: 'mio' } })).status === 403);
+check('...ni lo publica (403)', (await call('trips', 'PUT', { token: B, query: { id: T, publish: 1 }, body: { published: true } })).status === 403);
+check('...ni lo borra (404)', (await call('trips', 'DELETE', { token: B, query: { id: T } })).status === 404);
+check('...ni saca al dueño (404)', (await call('trips', 'DELETE', { token: B, query: { id: T, member: 'moises' } })).status === 404);
+
+const myB = ya.data.visit.id; // la visita "Mi Granada" de la compañera
+check('la compañera mete SU visita en el viaje', (await call('trips', 'PUT', { token: B, query: { id: T, visit: myB }, body: { in: true } })).status === 200);
+const asA = (await call('trips', 'GET', { token: A, query: { id: T } })).data.trip;
+check('el dueño la ve en el viaje, como de ella', asA.visits.some((v) => v.id === myB && v.author === 'otra' && v.mine === false));
+check('...y la lee (de lectura)', (await call('visits', 'GET', { token: A, query: { id: myB } })).data.visit?.mine === false);
+check('...pero no la edita (404)', (await call('visits', 'PUT', { token: A, query: { id: myB }, body: { title: 'x' } })).status === 404);
+check('los compañeros del viaje', JSON.stringify(asA.members.map((m) => `${m.name}:${m.role}:${m.status}`)) === JSON.stringify(['moises:owner:accepted', 'otra:member:accepted']), asA.members);
+
+check('la compañera se sale del viaje', (await call('trips', 'DELETE', { token: B, query: { id: T, member: 'otra' } })).status === 200);
+check('su visita queda suya, fuera del viaje', (await call('visits', 'GET', { token: B, query: { id: myB } })).data.visit?.tripId === null);
+check('y ya no ve el viaje ni las visitas (404)',
+  (await call('trips', 'GET', { token: B, query: { id: T } })).status === 404 && (await call('visits', 'GET', { token: B, query: { id: V1 } })).status === 404);
+await call('trips', 'POST', { token: A, query: { id: T, invite: 1 }, body: { name: 'otra' } });
+check('rechazar una invitacion', (await call('trips', 'POST', { token: B, query: { id: T, respond: 1 }, body: { accept: false } })).status === 200 &&
+  (await call('trips', 'GET', { token: B, query: { invites: 1 } })).data.invites.length === 0);
+
 check('sacar una visita del viaje', (await call('trips', 'PUT', { token: A, query: { id: T, visit: sanJose.id }, body: { in: false } })).data.trip?.visitCount === 2);
 check('borrar el viaje', (await call('trips', 'DELETE', { token: A, query: { id: T } })).status === 200);
 check('las visitas quedan, sueltas', (await call('visits', 'GET', { token: A, query: { id: leon.id } })).data.visit?.tripId === null);

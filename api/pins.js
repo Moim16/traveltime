@@ -14,6 +14,7 @@
 import { db, ensureSchema, nowIso, PIN_KINDS } from './_lib/db.js';
 import { readJson, clean, cleanText, parseId, parsePlace } from './_lib/http.js';
 import { currentUser, deny, notYours } from './_lib/auth.js';
+import { readableVisit } from './_lib/trips.js';
 
 const NAME_MAX = 120;
 const NOTE_MAX = 1000;
@@ -59,8 +60,9 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET' && q.visit) {
       const visitId = parseId(q.visit);
-      if (!visitId || !(await visitOf(me.id, visitId))) return notYours(res);
-      const rs = await db.execute({ sql: 'SELECT * FROM pins WHERE visitId = ? AND userId = ? ORDER BY id', args: [visitId, me.id] });
+      // Mia, o de un viaje donde soy compañero (los lugares son la gracia de viajar juntos).
+      if (!(await readableVisit(me.id, visitId))) return notYours(res);
+      const rs = await db.execute({ sql: 'SELECT * FROM pins WHERE visitId = ? ORDER BY id', args: [visitId] });
       return res.status(200).json({ pins: rs.rows.map(publicPin) });
     }
 

@@ -26,14 +26,14 @@ Mismo stack que `deudas`: sin build, funciones serverless de Vercel y Turso/libS
 | `api/visits.js` | Visitas de un lugar o de lo que hay dentro (por prefijo del id); publicar; "Ya estuve" (`fromPinId`) |
 | `api/photos.js` | Fotos de una visita: pedir la subida, confirmarla, pie de foto y borrar |
 | `api/pins.js` | Lugares puntuales de una visita (ver, comer, dormir, hacer, otro) |
-| `api/trips.js` | Viajes: crear, renombrar, meter y sacar visitas, publicar |
+| `api/trips.js` | Viajes: crear, renombrar, meter y sacar visitas, publicar; compañeros (invitar por usuario, aceptar, sacar, salir) |
 | `api/wishes.js` | "Quiero ir": desde un lugar publicado o un municipio entero |
 | `api/public.js` | Lo publicado, sin sesión: portada, visita, viaje y lugares dentro de un lugar |
 
 El código compartido va en **`api/_lib/`**, no en un `lib/` en la raíz: Vercel publica como archivo estático todo lo de la raíz, y en el primer despliegue `/lib/auth.js` se podía descargar. `api/` no se publica, y lo que empieza con `_` no se vuelve función. Son 8 funciones de las 12 del plan Hobby.
 
 ```bash
-npm test     # ~160 pruebas contra los handlers reales: base descartable y Cloudflare simulado
+npm test     # ~195 pruebas contra los handlers reales: base descartable y Cloudflare simulado
 npm run dev  # http://localhost:3100, con las claves del .env (contra Turso si estan)
 ```
 
@@ -51,6 +51,7 @@ npm run dev  # http://localhost:3100, con las claves del .env (contra Turso si e
 - Lo ajeno responde **404, igual que lo que no existe**: no se puede averiguar que existe.
 - **Qué muestra una visita publicada lo decide un solo archivo**, `api/_lib/public.js`. Sale el título, el lugar, las fechas, el relato, las fotos, los lugares y el `@usuario`. **No salen** el GPS ni la hora exacta de las fotos (solo el día), el correo, el nombre completo ni ids internos. Las pruebas buscan esas cadenas en la respuesta.
 - **Un viaje publicado muestra solo sus visitas publicadas**, y su tarjeta (fechas, países, portada) se calcula con ellas. Con las privadas se filtraría cuándo y dónde estuvo la persona. El nombre y el resumen sí salen tal como se escribieron, y la confirmación lo avisa.
+- **Compañeros de viaje.** El dueño invita por `@usuario`; la invitación aparece en la portada y en el panel. Al aceptar, el compañero **lee** todas las visitas del viaje (relato, fotos y lugares, **sin el GPS de las fotos**, que es solo de su dueño) y **suma las suyas**. No edita, borra, publica ni saca del viaje lo ajeno, y no renombra, publica ni borra el viaje. Salirse (o que lo saquen) deja sus visitas suyas, fuera del viaje. Un invitado que no aceptó no ve nada. La regla vive en `tripRole` y `readableVisit` (`api/_lib/trips.js`).
 - **"Quiero ir" y "Ya estuve" copian solo la ubicación** (nombre, tipo y coordenadas del lugar). El relato y las fotos son de quien los escribió.
 - **Caché de lo publicado:** el navegador no guarda (`no-cache`) y el CDN de Vercel guarda un minuto (`Vercel-CDN-Cache-Control`). Con `stale-while-revalidate` en `Cache-Control`, Chrome seguía mostrando hasta 5 minutos una visita despublicada. Un 404 no lo guarda nadie, porque si no ocultaría una visita recién publicada.
 
@@ -127,7 +128,6 @@ Coral para lo visitado y el progreso; tierra y agua frías a propósito. Globo c
 
 ## Pendiente
 
-- **Compañeros de viaje**: falta decidir cómo se invita a alguien (por usuario, por enlace…).
 - **Dominio en Resend** para abrir el registro.
 - **Nombres** en inglés o sin tilde en muchos países (corregidos Nicaragua y Brasil). España va de comunidad a municipio sin la provincia.
 - **Conteos de países grandes** levemente distintos de los oficiales (São Paulo 639 contra 645).
