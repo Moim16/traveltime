@@ -137,6 +137,25 @@ async function initSchema() {
     )`);
   await db.execute('CREATE INDEX IF NOT EXISTS idx_photos_visit ON photos (visitId, position)');
   await db.execute('CREATE INDEX IF NOT EXISTS idx_photos_user ON photos (userId, status)');
+
+  // Lugares puntuales de una visita: el convento, el restaurante, el mirador.
+  // Cuelgan de la visita y no del municipio: "donde comi en Granada en 2019" es
+  // parte de esa visita, y si vuelvo en 2025 puede ser otro lugar.
+  // kind: ver PIN_KINDS.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS pins (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      visitId   INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+      name      TEXT NOT NULL,
+      kind      TEXT NOT NULL DEFAULT 'other',
+      lat       REAL NOT NULL,
+      lng       REAL NOT NULL,
+      note      TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )`);
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_pins_visit ON pins (visitId)');
 }
 
 // Alfabeto sin caracteres que se confundan (nada de I, O, 0, 1).
@@ -154,3 +173,6 @@ export function newRecoveryCode() {
 export const normalizeRecovery = (v) => (v ?? '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 export const nowIso = () => new Date().toISOString();
+
+// Tipos de lugar. Los mismos (con su nombre y color) estan en js/pins.js.
+export const PIN_KINDS = ['see', 'eat', 'sleep', 'do', 'other'];

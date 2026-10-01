@@ -41,6 +41,7 @@ const handlers = {
   marks: (await import('../api/marks.js')).default,
   visits: (await import('../api/visits.js')).default,
   photos: (await import('../api/photos.js')).default,
+  pins: (await import('../api/pins.js')).default,
 };
 const { db } = await import('../api/_lib/db.js');
 const crypto = await import('node:crypto');
@@ -142,6 +143,36 @@ check('otra persona no la ve en su lista', (await call('visits', 'GET', { token:
 check('la visita sigue intacta', (await call('visits', 'GET', { token: A, query: { id: V1 } })).data.visit?.title === 'Semana Santa 2025');
 check('una visita que no existe tambien es 404', (await call('visits', 'GET', { token: A, query: { id: 99999 } })).status === 404);
 
+// ---------------------------------------------------------------- lugares (pines)
+const pin1 = await call('pins', 'POST', {
+  token: A, body: { visitId: V1, name: 'Convento San Francisco', kind: 'see', lat: 11.93117, lng: -85.95541, note: 'Museo y vista desde la torre' },
+});
+check('crear un lugar', pin1.status === 201 && pin1.data.pin.kind === 'see' && pin1.data.pin.lat === 11.93117, pin1);
+const PIN1 = pin1.data.pin.id;
+check('un tipo desconocido queda como "otro"',
+  (await call('pins', 'POST', { token: A, body: { visitId: V1, name: 'X', kind: 'hackeo', lat: 11.9, lng: -85.9 } })).data.pin?.kind === 'other');
+check('lugar sin nombre', (await call('pins', 'POST', { token: A, body: { visitId: V1, name: ' ', lat: 11, lng: -85 } })).status === 400);
+check('lugar sin coordenadas', (await call('pins', 'POST', { token: A, body: { visitId: V1, name: 'X' } })).status === 400);
+check('latitud imposible', (await call('pins', 'POST', { token: A, body: { visitId: V1, name: 'X', lat: 91, lng: 0 } })).status === 400);
+check('coordenada vacia no es 0', (await call('pins', 'POST', { token: A, body: { visitId: V1, name: 'X', lat: '', lng: '' } })).status === 400);
+check('otra persona no pone lugares en mi visita (404)',
+  (await call('pins', 'POST', { token: B, body: { visitId: V1, name: 'X', lat: 11, lng: -85 } })).status === 404);
+
+const pv = await call('pins', 'GET', { token: A, query: { visit: V1 } });
+check('lugares de la visita', pv.data.pins?.length === 2, pv.data);
+const pu = await call('pins', 'GET', { token: A, query: { under: 'NIC' } });
+check('lugares dentro de Nicaragua, con su visita', pu.data.pins?.length === 2 && pu.data.pins[0].visitTitle === 'Semana Santa 2025' && pu.data.pins[0].placeId === 'NIC.granada.granada', pu.data.pins?.[0]);
+check('ninguno dentro de Costa Rica', (await call('pins', 'GET', { token: A, query: { under: 'CRI' } })).data.pins.length === 0);
+check('otra persona no ve mis lugares', (await call('pins', 'GET', { token: B, query: { under: 'NIC' } })).data.pins.length === 0);
+check('otra persona no ve los de mi visita (404)', (await call('pins', 'GET', { token: B, query: { visit: V1 } })).status === 404);
+
+const pe = await call('pins', 'PUT', { token: A, query: { id: PIN1 }, body: { name: 'Convento San Francisco', kind: 'see', lat: 11.9312, lng: -85.9554 } });
+check('mover un lugar', pe.status === 200 && pe.data.pin.lat === 11.9312, pe);
+check('editar solo el nombre conserva lo demas',
+  (await call('pins', 'PUT', { token: A, query: { id: PIN1 }, body: { name: 'Convento' } })).data.pin?.lng === -85.9554);
+check('otra persona no edita mi lugar (404)', (await call('pins', 'PUT', { token: B, query: { id: PIN1 }, body: { name: 'x' } })).status === 404);
+check('otra persona no lo borra (404)', (await call('pins', 'DELETE', { token: B, query: { id: PIN1 } })).status === 404);
+
 // ---------------------------------------------------------------- fotos
 const up = await call('photos', 'POST', {
   token: A, query: { upload: 1 },
@@ -198,6 +229,7 @@ check('la subida abandonada se borro, tambien en Cloudflare', cf.deleted.include
 check('borrar visita', (await call('visits', 'DELETE', { token: A, query: { id: V1 } })).status === 200);
 check('borrar la visita se lleva sus fotos de Cloudflare', cf.deleted.includes('cf-1') && cf.deleted.includes('cf-4'), cf.deleted);
 check('...y de la base', !(await db.execute({ sql: 'SELECT 1 FROM photos WHERE visitId = ?', args: [V1] })).rows.length);
+check('borrar la visita se lleva sus lugares', !(await db.execute({ sql: 'SELECT 1 FROM pins WHERE visitId = ?', args: [V1] })).rows.length);
 check('borrada ya no esta', (await call('visits', 'GET', { token: A, query: { id: V1 } })).status === 404);
 check('sin visitas ni marca, el lugar deja de contar', !(await call('marks', 'GET', { token: A })).data.marks.includes('NIC.granada.granada'));
 

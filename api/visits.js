@@ -117,6 +117,9 @@ export default async function handler(req, res) {
       // las filas pero dejaria las imagenes alla, ocupando cupo para siempre.
       const photos = await db.execute({ sql: 'SELECT id, cfId FROM photos WHERE visitId = ? AND userId = ?', args: [id, me.id] });
       await removePhotos(photos.rows);
+      // Explicito: en Turso las FOREIGN KEY no siempre se aplican (el PRAGMA es
+      // por conexion y el cliente web no la mantiene), asi que no hay cascada segura.
+      await db.execute({ sql: 'DELETE FROM pins WHERE visitId = ? AND userId = ?', args: [id, me.id] });
       await db.execute({ sql: 'DELETE FROM visits WHERE id = ? AND userId = ?', args: [id, me.id] });
       return res.status(200).json({ ok: true });
     }

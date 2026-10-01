@@ -318,6 +318,55 @@
     .lb-nav.next { right: 12px; }
     .lb-close:hover, .lb-nav:hover { background: rgba(255, 255, 255, 0.22); }
 
+    /* Lugares */
+    .pins:empty { display: none; }
+    .pins { margin: 18px 0 4px; }
+    .pin-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+    .pin-list button {
+      width: 100%; display: flex; gap: 10px; align-items: flex-start; text-align: left; cursor: pointer;
+      border: 0; background: none; padding: 8px; border-radius: 12px;
+    }
+    .pin-list button:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+    .pin-list small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+    .pin-emoji, .pin-kind {
+      flex: none; display: inline-grid; place-items: center; border-radius: 10px;
+      background: color-mix(in srgb, var(--k) 18%, transparent);
+    }
+    .pin-emoji { width: 32px; height: 32px; font-size: 16px; }
+    .pin-kind { padding: 2px 8px; font-size: 12px; font-weight: 650; color: var(--k); justify-self: start; }
+    .pin-card { display: grid; gap: 6px; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+    .pin-card strong { font-size: 15px; }
+    .pin-card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .pin-actions { display: flex; gap: 10px; }
+    .pin-actions .danger-link { margin-left: auto; }
+    .pin-popup .maplibregl-popup-content {
+      background: var(--card-solid); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow);
+      border: 1px solid var(--line);
+    }
+    .pin-popup .maplibregl-popup-tip { border-top-color: var(--card-solid) !important; border-bottom-color: var(--card-solid) !important; }
+    .pin-popup .maplibregl-popup-close-button { color: var(--muted); font-size: 18px; padding: 2px 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip input { position: absolute; opacity: 0; pointer-events: none; }
+    .chip span {
+      display: inline-block; padding: 7px 12px; border-radius: 999px; cursor: pointer; font-size: 14px; color: var(--ink);
+      border: 1px solid var(--line); background: var(--card-solid);
+    }
+    .chip input:checked + span { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 650; }
+    .chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .coords { font-variant-numeric: tabular-nums; margin: 0 0 8px; }
+    .link.light { color: #ffb0a0; }
+    .secondary.small { padding: 6px 10px; font-size: 13px; border-radius: 10px; }
+    .pick-bar {
+      position: fixed; z-index: 5; left: 50%; transform: translateX(-50%); bottom: 24px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
+      padding: 10px 14px; border-radius: 16px; max-width: calc(100vw - 32px); font-size: 14px;
+    }
+    /* Eligiendo un punto: el panel se aparta para dejar ver el mapa */
+    body.picking .panel { opacity: 0.25; pointer-events: none; }
+    @media (max-width: 819px) {
+      body.picking .panel { transform: translateY(calc(100% - 40px)); opacity: 1; transition: transform 0.25s ease; }
+    }
+
     /* Formularios */
     .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: 13px; color: var(--muted); font-weight: 550; }
     .field input, .field textarea {

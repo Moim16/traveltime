@@ -10,6 +10,7 @@ import * as visits from './visits.js';
 import * as account from './account.js';
 import { api } from './api.js';
 import { uploadAll } from './photos.js';
+import { KINDS, kindOf, toGeoJSON, pinForm, pinCard } from './pins.js';
 import { esc, toast, ask, busy, formatRange, paragraphs } from './ui.js';
 import { BASEMAPS, currentBasemap, setBasemap, tintBasemap } from './basemap.js';
 
@@ -126,6 +127,38 @@ function addLayers() {
       'text-halo-width': 1.5,
     },
   });
+  // Los lugares de las visitas, encima de todo: un punto por lugar, con el color
+  // de su tipo y el nombre debajo cuando hay zoom para leerlo.
+  map.addSource('pins', { type: 'geojson', data: toGeoJSON(pinsData), promoteId: 'id' });
+  const big = ['any', ['boolean', ['feature-state', 'hover'], false], ['boolean', ['feature-state', 'selected'], false]];
+  map.addLayer({
+    id: 'pins-dot',
+    type: 'circle',
+    source: 'pins',
+    paint: {
+      'circle-radius': ['case', big, 9, 6.5],
+      'circle-color': ['match', ['get', 'kind'], ...Object.entries(KINDS).flatMap(([k, v]) => [k, v.color]), KINDS.other.color],
+      'circle-stroke-width': 2.5,
+      'circle-stroke-color': '#ffffff',
+      'circle-radius-transition': { duration: 150 },
+    },
+  });
+  map.addLayer({
+    id: 'pins-label',
+    type: 'symbol',
+    source: 'pins',
+    minzoom: 11,
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['literal', ['Noto Sans Bold']],
+      'text-size': 12,
+      'text-anchor': 'top',
+      'text-offset': [0, 0.9],
+      'text-max-width': 9,
+      'text-optional': true,
+    },
+    paint: { 'text-color': css('--ink'), 'text-halo-color': css('--halo'), 'text-halo-width': 1.6 },
+  });
   // El globo en el mundo: se entiende de un vistazo donde queda cada cosa.
   map.setProjection({ type: 'globe' });
   applyFilters();
@@ -171,7 +204,7 @@ tip.className = 'tip';
 tip.hidden = true;
 document.body.append(tip);
 
-const PICK = ['city-fill', 'adm1-fill', 'world-fill'];
+const PICK = ['pins-dot', 'city-fill', 'adm1-fill', 'world-fill'];
 const pick = (point) => map.queryRenderedFeatures(point, { layers: PICK.filter((l) => map.getLayer(l)) })[0];
 const featureId = (f) => f.properties.id ?? f.properties.iso;
 let hovered = null;
@@ -181,8 +214,8 @@ map.on('mousemove', (e) => {
   const key = f && { source: f.source, id: featureId(f) };
   if (hovered && (!key || hovered.id !== key.id || hovered.source !== key.source)) map.setFeatureState(hovered, { hover: false });
   hovered = key || null;
-  map.getCanvas().style.cursor = f ? 'pointer' : '';
-  if (!f) return void (tip.hidden = true);
+  map.getCanvas().style.cursor = picking ? 'crosshair' : f ? 'pointer' : '';
+  if (!f || picking) return void (tip.hidden = true);
   map.setFeatureState(hovered, { hover: true });
   tip.textContent = f.properties.name;
   tip.style.transform = `translate(${e.point.x + 14}px, ${e.point.y + 14}px)`;
@@ -195,8 +228,151 @@ map.getCanvas().addEventListener('mouseleave', () => {
 });
 
 map.on('click', (e) => {
+  if (picking) return pickAt(e.lngLat.lat, e.lngLat.lng);
   const f = pick(e.point);
-  if (f) go(featureId(f));
+  if (!f) return;
+  if (f.layer.id === 'pins-dot') return openPinPopup(Number(f.properties.id));
+  go(featureId(f));
+});
+
+// ---------- Lugares (pines) ----------
+
+let pinsData = [];
+let pinsKey = '';
+let popup = null;
+// Modo "toca el mapa": { visitId } para uno nuevo, { visitId, pin } para mover uno.
+let picking = null;
+
+// Los pines a la vista: los de la visita abierta, o los de todo lo que hay
+// dentro del lugar abierto. En el mundo, ninguno (serian demasiados puntos sueltos).
+async function loadPins() {
+  const key = !account.current() ? '' : typeof state.visit === 'number' ? `v${state.visit}` : here() ? `u${here()}` : '';
+  pinsKey = key;
+  let pins = [];
+  if (key) {
+    try {
+      pins = (await api('pins', { query: key[0] === 'v' ? { visit: state.visit } : { under: here() } })).pins;
+    } catch {
+      pins = [];
+    }
+  }
+  if (pinsKey !== key) return; // ya se fue a otro lado
+  pinsData = pins;
+  map.getSource('pins')?.setData(toGeoJSON(pinsData));
+  renderPinList();
+}
+
+function openPinPopup(id, { fly: doFly = false } = {}) {
+  const pin = pinsData.find((p) => p.id === id);
+  if (!pin) return;
+  popup?.remove();
+  for (const p of pinsData) map.setFeatureState({ source: 'pins', id: p.id }, { selected: p.id === id });
+  if (doFly) map.flyTo({ center: [pin.lng, pin.lat], zoom: Math.max(map.getZoom(), 15), padding: padding(), duration: 700 });
+  popup = new maplibregl.Popup({ offset: 14, maxWidth: '290px', className: 'pin-popup' })
+    .setLngLat([pin.lng, pin.lat])
+    .setHTML(pinCard(pin, { inVisit: state.visit === pin.visitId }))
+    .addTo(map);
+  popup.on('close', () => map.getSource('pins') && map.setFeatureState({ source: 'pins', id }, { selected: false }));
+}
+
+function renderPinList() {
+  const box = $('#pins');
+  if (!box || typeof state.visit !== 'number') return;
+  const mine = pinsData.filter((p) => p.visitId === state.visit);
+  box.innerHTML =
+    `<div class="visits-head"><h2>Lugares${mine.length ? ` <span class="count">${mine.length}</span>` : ''}</h2>` +
+    `<button class="primary small" data-pin-add>+ Lugar</button></div>` +
+    (mine.length
+      ? '<ul class="pin-list">' +
+        mine
+          .map((p) => {
+            const k = kindOf(p.kind);
+            return `<li><button data-pin-focus="${p.id}"><span class="pin-emoji" style="--k:${k.color}">${k.emoji}</span><span><b>${esc(p.name)}</b>${p.note ? `<small>${esc(p.note)}</small>` : ''}</span></button></li>`;
+          })
+          .join('') +
+        '</ul>'
+      : '<p class="note">Marca dónde estuviste: el restaurante, el mirador, el hotel. Tocas el mapa, usas tu ubicación o lo sacas de una foto.</p>');
+}
+
+function startPicking(mode) {
+  picking = mode;
+  popup?.remove();
+  document.body.classList.add('picking');
+  const bar = document.createElement('div');
+  bar.className = 'pick-bar glass';
+  bar.id = 'pick-bar';
+  bar.innerHTML = `<span>${mode.pin ? `Toca el mapa en la nueva ubicación de <b>${esc(mode.pin.name)}</b>` : 'Toca el mapa donde está el lugar'}</span>
+    ${mode.pin ? '' : '<button class="secondary small" data-pick-here>Usar mi ubicación</button>'}
+    <button class="link" data-pick-cancel>Cancelar</button>`;
+  document.body.append(bar);
+}
+
+function stopPicking() {
+  picking = null;
+  document.body.classList.remove('picking');
+  $('#pick-bar')?.remove();
+}
+
+async function pickAt(lat, lng) {
+  const mode = picking;
+  stopPicking();
+  try {
+    const pin = mode.pin
+      ? (await api('pins', { method: 'PUT', query: { id: mode.pin.id }, body: { lat, lng } })).pin
+      : await pinForm({ visitId: mode.visitId, lat, lng });
+    if (!pin) return;
+    toast(mode.pin ? 'Lugar movido.' : 'Lugar agregado.');
+    await loadPins();
+    openPinPopup(pin.id);
+  } catch (ex) {
+    toast(ex.message, 'err');
+  }
+}
+
+function useMyLocation() {
+  if (!navigator.geolocation) return toast('Este navegador no da la ubicación.', 'err');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => pickAt(pos.coords.latitude, pos.coords.longitude),
+    (err) => toast(err.code === 1 ? 'No diste permiso para usar tu ubicación.' : 'No se pudo obtener tu ubicación.', 'err'),
+    { enableHighAccuracy: true, timeout: 15000 },
+  );
+}
+
+document.addEventListener('click', async (e) => {
+  if (e.target.closest('[data-pin-add]')) return startPicking({ visitId: state.visit });
+  if (e.target.closest('[data-pick-cancel]')) return stopPicking();
+  if (e.target.closest('[data-pick-here]')) return useMyLocation();
+  const focus = e.target.closest('[data-pin-focus]');
+  if (focus) return openPinPopup(Number(focus.dataset.pinFocus), { fly: true });
+  const edit = e.target.closest('[data-pin-edit]');
+  if (edit) {
+    const pin = pinsData.find((p) => p.id === Number(edit.dataset.pinEdit));
+    popup?.remove();
+    if (pin && (await pinForm({ visitId: pin.visitId, lat: pin.lat, lng: pin.lng, pin }))) {
+      toast('Lugar guardado.');
+      await loadPins();
+      openPinPopup(pin.id);
+    }
+    return;
+  }
+  const move = e.target.closest('[data-pin-move]');
+  if (move) return startPicking({ visitId: state.visit, pin: pinsData.find((p) => p.id === Number(move.dataset.pinMove)) });
+  const del = e.target.closest('[data-pin-delete]');
+  if (del) {
+    const pin = pinsData.find((p) => p.id === Number(del.dataset.pinDelete));
+    if (!pin || !(await ask({ title: `¿Borrar «${pin.name}»?`, ok: 'Borrar', danger: true }))) return;
+    try {
+      await api('pins', { method: 'DELETE', query: { id: pin.id } });
+      popup?.remove();
+      toast('Lugar borrado.');
+      await loadPins();
+    } catch (ex) {
+      toast(ex.message, 'err');
+    }
+  }
+});
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && picking) stopPicking();
 });
 
 // ---------- Navegacion ----------
@@ -239,8 +415,11 @@ async function show({ place: id, visit, edit }) {
   }
   // Abrir una visita no mueve el mapa: el lugar ya esta a la vista.
   if (!samePlace) fly();
+  stopPicking();
+  popup?.remove();
   renderCrumbs();
   renderPanel();
+  loadPins();
 }
 
 function fly() {
@@ -430,9 +609,11 @@ async function renderVisit(panel) {
     `<h1>${esc(v.title)}</h1>` +
     `<article class="story">${v.body ? paragraphs(v.body) : '<p class="note">Sin relato todavía.</p>'}</article>` +
     `<section class="gallery" id="gallery" aria-label="Fotos"></section>` +
+    `<section class="pins" id="pins" aria-label="Lugares"></section>` +
     `<div class="actions start"><button class="secondary" data-go="${esc(place)}/v/${v.id}/editar">Editar</button>` +
     `<button class="danger-link" data-delete="${v.id}">Borrar</button></div>`;
   renderGallery(v.id);
+  renderPinList(); // si los pines llegaron antes que la visita
 }
 
 // ---------- Galeria ----------
@@ -512,6 +693,7 @@ function openPhoto(index) {
         <figcaption>
           <input class="lb-caption" value="${esc(p.caption ?? '')}" placeholder="Escribe un pie de foto…" maxlength="300" aria-label="Pie de foto">
           <span class="lb-meta">${esc(when)}${when ? ' · ' : ''}${i + 1} de ${gallery.photos.length}</span>
+          ${p.lat != null ? '<button class="link light" data-lb="pin">📍 Marcar como lugar</button>' : ''}
           <button class="danger-link" data-lb="delete">Borrar foto</button>
         </figcaption>
       </figure>`;
@@ -539,6 +721,18 @@ function openPhoto(index) {
     if (e.target === back || act === 'close') return close();
     if (act === 'prev') return move(-1);
     if (act === 'next') return move(1);
+    if (act === 'pin') {
+      // El GPS de la foto dice donde estabas: el lugar sale de ahi.
+      const p = gallery.photos[i];
+      close();
+      const pin = await pinForm({ visitId: gallery.visitId, lat: p.lat, lng: p.lng, name: p.caption ?? '' });
+      if (pin) {
+        toast('Lugar agregado.');
+        await loadPins();
+        openPinPopup(pin.id, { fly: true });
+      }
+      return;
+    }
     if (act === 'delete') {
       if (!(await ask({ title: '¿Borrar esta foto?', text: 'No se puede deshacer.', ok: 'Borrar', danger: true }))) return;
       try {
@@ -669,6 +863,7 @@ account.onChange(async (me) => {
   else visits.clear();
   applyStates();
   renderPanel();
+  loadPins();
 });
 renderAccountButton();
 
