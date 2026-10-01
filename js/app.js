@@ -162,6 +162,20 @@ function addLayers() {
     },
     paint: { 'text-color': css('--ink'), 'text-halo-color': css('--halo'), 'text-halo-width': 1.6 },
   });
+  // Donde se tomo cada foto de la visita abierta (del GPS, que solo ve el dueño).
+  map.addSource('photo-pts', { type: 'geojson', data: photoGeo(), promoteId: 'id' });
+  map.addLayer({
+    id: 'photo-dot',
+    type: 'circle',
+    source: 'photo-pts',
+    paint: {
+      'circle-radius': ['case', ['boolean', ['feature-state', 'hover'], false], 7, 5],
+      'circle-color': '#0ea5e9',
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#ffffff',
+      'circle-opacity': 0.9,
+    },
+  }, 'pins-dot');
   // "Quiero ir": un anillo ambar con estrella, distinto del punto lleno de lo visitado.
   map.addSource('wishes', { type: 'geojson', data: wishGeo(), promoteId: 'id' });
   map.addLayer({
@@ -220,7 +234,7 @@ tip.className = 'tip';
 tip.hidden = true;
 document.body.append(tip);
 
-const PICK = ['pins-dot', 'wish-dot', 'city-fill', 'adm1-fill', 'world-fill'];
+const PICK = ['pins-dot', 'photo-dot', 'wish-dot', 'city-fill', 'adm1-fill', 'world-fill'];
 const pick = (point) => map.queryRenderedFeatures(point, { layers: PICK.filter((l) => map.getLayer(l)) })[0];
 const featureId = (f) => f.properties.id ?? f.properties.iso;
 let hovered = null;
@@ -249,6 +263,10 @@ map.on('click', (e) => {
   if (!f) return;
   if (f.layer.id === 'pins-dot') return openPinPopup(Number(f.properties.id));
   if (f.layer.id === 'wish-dot') return openWishPopup(Number(f.properties.id));
+  if (f.layer.id === 'photo-dot') {
+    const i = gallery.photos.findIndex((p) => p.id === Number(f.properties.id));
+    return i >= 0 && openPhoto(i);
+  }
   go(featureId(f));
 });
 
@@ -544,6 +562,7 @@ async function show(route) {
   renderCrumbs();
   renderPanel();
   loadPins();
+  refreshPhotoPoints(); // fuera de una visita, sin puntos de fotos
 }
 
 function fly() {
@@ -595,16 +614,49 @@ function stat(label, done, total) {
   return `<div class="stat"><div class="stat-row"><span><b>${done}</b> de ${total} ${esc(label)}</span><span class="pct">${pct}%</span></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
 }
 
+// Con mas de FILTER_FROM filas la lista trae un buscador y "todos / visitados /
+// sin visitar": recorrer 779 municipios de Andalucia a dedo no es una opcion.
+const FILTER_FROM = 12;
+
 function list(features) {
   const rows = [...features]
     .map((f) => f.properties)
     .sort((a, b) => a.name.localeCompare(b.name, 'es'))
     .map((p) => {
       const on = visits.has(p.id);
-      return `<li><button data-go="${esc(p.id)}"><span>${esc(p.name)}</span><span class="dot ${on ? 'on' : ''}" aria-label="${on ? 'visitado' : 'sin visitar'}"></span></button></li>`;
+      return `<li data-key="${esc(geo.fold(p.name))}" data-on="${on ? 1 : 0}"><button data-go="${esc(p.id)}"><span>${esc(p.name)}</span><span class="dot ${on ? 'on' : ''}" aria-label="${on ? 'visitado' : 'sin visitar'}"></span></button></li>`;
     });
-  return `<ul class="list">${rows.join('')}</ul>`;
+  const filter =
+    rows.length > FILTER_FROM
+      ? `<div class="list-filter"><input type="search" placeholder="Filtrar ${rows.length} lugares…" aria-label="Filtrar la lista" data-list-filter>
+          <div class="seg" role="radiogroup" aria-label="Mostrar">${[['all', 'Todos'], ['on', 'Visitados'], ['off', 'Sin visitar']]
+            .map(([k, l], i) => `<label><input type="radio" name="list-show" value="${k}" ${i ? '' : 'checked'} data-list-show><span>${l}</span></label>`)
+            .join('')}</div></div><p class="note list-empty" hidden>Nada coincide.</p>`
+      : '';
+  return `${filter}<ul class="list">${rows.join('')}</ul>`;
 }
+
+function applyListFilter(panel) {
+  const term = geo.fold(panel.querySelector('[data-list-filter]')?.value.trim() ?? '');
+  const show = panel.querySelector('[data-list-show]:checked')?.value ?? 'all';
+  let visible = 0;
+  for (const li of panel.querySelectorAll('.list li')) {
+    const ok = (!term || li.dataset.key.includes(term)) && (show === 'all' || (show === 'on') === (li.dataset.on === '1'));
+    li.hidden = !ok;
+    if (ok) visible++;
+  }
+  const empty = panel.querySelector('.list-empty');
+  if (empty) empty.hidden = visible > 0;
+}
+$('#panel').addEventListener('input', (e) => {
+  if (e.target.matches('[data-list-filter], [data-list-show]')) applyListFilter($('#panel'));
+});
+// Enter en el filtro con un solo resultado: entrar a ese lugar.
+$('#panel').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || !e.target.matches('[data-list-filter]')) return;
+  const shown = [...$('#panel').querySelectorAll('.list li:not([hidden]) [data-go]')];
+  if (shown.length === 1) go(shown[0].dataset.go);
+});
 
 function toggleButton(id) {
   if (!account.current()) return `<button class="primary" data-login="Entra para marcar los lugares que visitaste.">Marcar como visitado</button>`;
@@ -779,12 +831,20 @@ async function renderVisit(panel) {
   }
   if (state.visit !== visitId) return; // ya se fue a otra
   gallery = { visitId, photos };
+  currentVisit = v;
+  refreshPhotoPoints();
 
   const story = renderStory(v.body, { photos: new Map(photos.map((p) => [p.id, p])), pins: new Map(pins.map((p) => [p.id, p])) });
+  const fromPhotos = photoDates(photos);
+  const suggest = fromPhotos && (fromPhotos.start !== v.startDay || (fromPhotos.end ?? null) !== (v.endDay ?? null));
   panel.innerHTML =
     back +
     kindLine(formatRange(v.startDay, v.endDay)) +
     `<h1>${esc(v.title)}</h1>` +
+    (suggest
+      ? `<div class="suggest">📅 Tus fotos son del <b>${esc(formatRange(fromPhotos.start, fromPhotos.end))}</b>${v.startDay ? '' : ' y la visita no tiene fecha'}.
+          <button class="link" data-use-photo-dates="${fromPhotos.start}|${fromPhotos.end ?? ''}">Usar estas fechas</button></div>`
+      : '') +
     `<article class="story">${story || `<p class="note">Sin relato todavía. <button class="link" data-go="${esc(place)}/v/${v.id}/editar">Escribirlo</button></p>`}</article>` +
     `<div class="actions start"><button class="primary" data-go="${esc(place)}/v/${v.id}/editar">✎ Escribir</button>` +
     `<button class="danger-link" data-delete="${v.id}">Borrar</button></div>` +
@@ -841,6 +901,41 @@ function renderNewVisit(panel, back) {
 // ---------- Galeria ----------
 
 let gallery = { visitId: null, photos: [] };
+let currentVisit = null; // la visita abierta, tal como vino del servidor
+
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-use-photo-dates]');
+  if (!b || !currentVisit) return;
+  const [startDay, endDay] = b.dataset.usePhotoDates.split('|');
+  await busy(b, async () => {
+    try {
+      // PUT reemplaza todo: se manda lo que ya tenia, con las fechas nuevas.
+      const v = currentVisit;
+      await api('visits', { method: 'PUT', query: { id: v.id }, body: { title: v.title, body: v.body, startDay, endDay: endDay || null } });
+      toast('Fechas actualizadas.');
+      renderPanel();
+    } catch (ex) {
+      toast(ex.message, 'err');
+    }
+  });
+});
+
+// Las fotos con GPS de la visita abierta, como puntos. Fuera de una visita, ninguno.
+const photoGeo = () => ({
+  type: 'FeatureCollection',
+  features: (typeof state.visit === 'number' && gallery.visitId === state.visit ? gallery.photos : [])
+    .filter((p) => p.lat != null)
+    .map((p) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat] }, properties: { id: p.id, name: p.caption || 'Foto' } })),
+});
+const refreshPhotoPoints = () => map.getSource('photo-pts')?.setData(photoGeo());
+
+// "Tus fotos son del 17 al 20 abr": las fechas de la visita que sugieren las fotos.
+// Solo si difieren de las que ya tiene; con ninguna foto fechada, nada.
+function photoDates(photos) {
+  const days = photos.map((p) => p.takenAt?.slice(0, 10)).filter(Boolean).sort();
+  if (!days.length) return null;
+  return { start: days[0], end: days[days.length - 1] === days[0] ? null : days[days.length - 1] };
+}
 
 async function renderGallery(visitId) {
   const box = $('#gallery');
@@ -853,6 +948,7 @@ async function renderGallery(visitId) {
   }
   if ($('#gallery') !== box || state.visit !== visitId) return; // ya se fue a otra visita
   paintGallery(box);
+  refreshPhotoPoints();
 }
 
 function paintGallery(box, uploading = []) {

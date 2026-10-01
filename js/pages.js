@@ -229,7 +229,7 @@ export async function renderPublicVisit(id, { go, openViewer }) {
   el.innerHTML = `
     <header class="article-hero ${cover ? 'has-cover' : ''}">
       ${cover ? `<img class="article-cover" src="${esc(cover.urls.full)}" alt="">` : ''}
-      <div class="article-bar"><a class="glass-btn" href="#/" aria-label="Inicio">←</a><button class="glass-btn" data-share>Compartir</button></div>
+      <div class="article-bar"><a class="glass-btn" href="#/" aria-label="Inicio">←</a><span><button class="glass-btn" data-print title="Guardar como PDF o imprimir">PDF</button> <button class="glass-btn" data-share>Compartir</button></span></div>
       <div class="article-title wrap-narrow">
         <p class="eyebrow">📍 ${esc(v.placeName ?? '')}</p>
         <h1>${esc(v.title)}</h1>
@@ -294,6 +294,15 @@ export async function renderPublicVisit(id, { go, openViewer }) {
           toast('Enlace copiado.');
         }
       } catch {}
+      return;
+    }
+    // PDF: el dialogo de imprimir del navegador ("Guardar como PDF"). Las fotos
+    // se cargan antes de abrirlo: con loading=lazy, las de abajo saldrian en blanco.
+    if (e.target.closest('[data-print]')) {
+      const imgs = [...el.querySelectorAll('.article-body img, .article-cover')];
+      imgs.forEach((img) => (img.loading = 'eager'));
+      await Promise.all(imgs.map((img) => (img.complete ? null : new Promise((r) => (img.onload = img.onerror = r)))));
+      print();
       return;
     }
     if (e.target.closest('[data-want-place]')) return wantToGo({ placeId: v.placeId, placeName: v.placeName, visitId: v.id });

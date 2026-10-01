@@ -141,6 +141,13 @@ body.writing { overflow: hidden; }
 .tt-place .story-place { cursor: default; }
 .tt-place .story-place .link { margin-left: auto; }
 
+.draft-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: -12px 0 22px; padding: 10px 14px;
+  border-radius: 14px; font-size: 14px; background: color-mix(in srgb, var(--accent-2) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-2) 40%, transparent);
+}
+.draft-bar span { flex: 1 1 220px; }
+
 @media (prefers-reduced-motion: reduce) {
   .writer { transition: none; }
 }

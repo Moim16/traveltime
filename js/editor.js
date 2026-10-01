@@ -219,6 +219,38 @@ const I18N = {
   },
 };
 
+// ---------- Borrador en el telefono ----------
+// localStorage puede faltar (ventana privada, sin espacio): todo va en try y,
+// si falla, simplemente no hay borrador.
+
+const DRAFT_DELAY_MS = 1000;
+const draftKey = (id) => `tt.draft.${id}`;
+function writeDraft(id, data) {
+  try {
+    localStorage.setItem(draftKey(id), JSON.stringify(data));
+  } catch {}
+}
+function readDraft(id) {
+  try {
+    return JSON.parse(localStorage.getItem(draftKey(id)) || 'null');
+  } catch {
+    return null;
+  }
+}
+function dropDraft(id) {
+  try {
+    localStorage.removeItem(draftKey(id));
+  } catch {}
+}
+function timeAgo(iso) {
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return 'hace un momento';
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  return `el ${new Date(iso).toLocaleDateString('es', { day: 'numeric', month: 'short' })}`;
+}
+
 // ---------- La pantalla ----------
 
 let open = null;
@@ -261,16 +293,35 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
   fit();
   const status = root.querySelector('.writer-status');
   let dirty = false;
+  let editor = null;
+  let draftTimer = null;
   const markDirty = () => {
     dirty = true;
     status.textContent = 'Sin guardar';
+    // Borrador en el telefono, un segundo despues de dejar de escribir.
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraft, DRAFT_DELAY_MS);
+  };
+  const saveDraft = async () => {
+    if (!editor || !dirty) return;
+    try {
+      const body = await editor.save();
+      writeDraft(visit.id, {
+        at: new Date().toISOString(),
+        base: visit.updatedAt,
+        title: title.value,
+        startDay: root.querySelector('[name=startDay]').value,
+        endDay: root.querySelector('[name=endDay]').value,
+        blocks: body.blocks,
+      });
+    } catch {}
   };
   title.addEventListener('input', () => (fit(), markDirty()));
   root.querySelectorAll('.writer-dates input').forEach((i) => i.addEventListener('change', markDirty));
 
   const [EditorJS, Header, List, Quote, Delimiter, Marker] = await loadLibs();
   root.querySelector('#writer-editor').innerHTML = '';
-  const editor = new EditorJS({
+  editor = new EditorJS({
     holder: 'writer-editor',
     data: visit.body ?? { blocks: [] },
     placeholder: 'Cuenta qué hiciste… Toca + para agregar títulos, fotos, lugares o avisos.',
@@ -291,6 +342,34 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
   });
   await editor.isReady;
 
+  // Un borrador mas nuevo que lo guardado (se corto la señal, se cerro la
+  // pestaña, se acabo la bateria): se ofrece, no se impone.
+  const draft = readDraft(visit.id);
+  if (draft && draft.base === visit.updatedAt) {
+    const bar = document.createElement('div');
+    bar.className = 'draft-bar';
+    bar.innerHTML = `<span>📝 Tienes un borrador sin guardar de ${esc(timeAgo(draft.at))}.</span>
+      <button class="primary small" data-draft-use>Recuperar</button><button class="link" data-draft-drop>Descartar</button>`;
+    root.querySelector('.writer-page').prepend(bar);
+    bar.querySelector('[data-draft-use]').addEventListener('click', async () => {
+      title.value = draft.title;
+      fit();
+      root.querySelector('[name=startDay]').value = draft.startDay ?? '';
+      root.querySelector('[name=endDay]').value = draft.endDay ?? '';
+      await editor.render({ blocks: draft.blocks });
+      bar.remove();
+      markDirty();
+      status.textContent = 'Borrador recuperado · sin guardar';
+    });
+    bar.querySelector('[data-draft-drop]').addEventListener('click', () => {
+      dropDraft(visit.id);
+      bar.remove();
+    });
+  } else if (draft) {
+    // La visita cambio desde otro lado despues de ese borrador: ya no aplica.
+    dropDraft(visit.id);
+  }
+
   const doSave = async () => {
     const btn = root.querySelector('[data-w-save]');
     if (btn.disabled) return false;
@@ -305,12 +384,16 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
         body: { blocks: body.blocks },
       });
       dirty = false;
+      clearTimeout(draftTimer);
+      dropDraft(visit.id);
       status.textContent = 'Guardado ✓';
       visit = saved;
       return true;
     } catch (ex) {
-      status.textContent = 'No se guardó';
-      toast(ex.message, 'err');
+      // Sin señal: lo escrito no se pierde, queda en el telefono.
+      await saveDraft();
+      status.textContent = ex.status === 0 ? 'Sin conexión · guardado en este teléfono' : 'No se guardó';
+      toast(ex.status === 0 ? 'Sin conexión. Lo que escribiste quedó guardado en este teléfono; vuelve a guardar cuando tengas señal.' : ex.message, 'err');
       return false;
     } finally {
       btn.disabled = false;
@@ -319,6 +402,8 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
 
   const close = async () => {
     if (dirty && !(await ask({ title: '¿Salir sin guardar?', text: 'Perderás lo que escribiste desde la última vez que guardaste.', ok: 'Salir', danger: true }))) return;
+    clearTimeout(draftTimer);
+    dropDraft(visit.id); // eligio descartar
     teardown();
     onClose?.(visit);
   };
