@@ -290,8 +290,10 @@ check('la portada trae la recomendacion con autor, portada y conteos',
   card?.id === V1 && card.author === 'moises' && card.cover?.includes('/ttcard') && card.photoCount === 1 && card.pinCount >= 1, card);
 check('la portada trae los ultimos lugares', home.data.places.some((p) => p.id === PIN1 && p.author === 'moises'));
 check('la portada trae cuantos paises', home.data.stats.countries === 1 && home.data.stats.visits === 1, home.data.stats);
-check('la portada se cachea en el CDN', /s-maxage=60/.test(home.headers['cache-control']), home.headers);
-check('un 404 publico no se cachea (al publicar aparece al tiro)', (await pub({ visit: 99999 })).headers['cache-control'] === 'no-store');
+check('la portada se guarda un minuto en el CDN', home.headers['vercel-cdn-cache-control']?.startsWith('max-age=60'), home.headers);
+check('...pero no en el navegador (si no, una visita despublicada seguia viendose)', home.headers['cache-control'] === 'no-cache', home.headers);
+const nf = await pub({ visit: 99999 });
+check('un 404 publico no se guarda ni en el navegador ni en el CDN (al publicar aparece al tiro)', nf.headers['cache-control'] === 'no-store' && nf.headers['vercel-cdn-cache-control'] === 'no-store', nf.headers);
 
 const pubVisit = await pub({ visit: V1 });
 const json = JSON.stringify(pubVisit.data);

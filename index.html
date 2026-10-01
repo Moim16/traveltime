@@ -9,6 +9,7 @@
   <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css">
   <link rel="stylesheet" href="/css/story.css">
+  <link rel="stylesheet" href="/css/pages.css">
   <style>
     /* Paleta: tierra y agua frias y calmadas, para que lo visitado (coral) sea lo
        unico que llama la atencion. El mismo coral marca progreso en el panel. */
@@ -442,7 +443,7 @@
 
   <header class="top">
     <div class="bar-row">
-      <div class="brand" aria-hidden="true">✈</div>
+      <a class="brand" href="#/" aria-label="Inicio">✈</a>
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
         <input id="q" class="glass" type="search" placeholder="Buscar país, departamento o ciudad" autocomplete="off"

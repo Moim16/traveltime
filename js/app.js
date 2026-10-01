@@ -14,6 +14,7 @@ import { KINDS, kindOf, toGeoJSON, pinForm, pinCard } from './pins.js';
 import { esc, toast, ask, busy, formatRange } from './ui.js';
 import { renderStory } from './story.js';
 import { openWriter, closeWriter } from './editor.js';
+import { renderHome, renderPublicVisit, closePage, wantToGo, beenThere } from './pages.js';
 import { BASEMAPS, currentBasemap, setBasemap, tintBasemap } from './basemap.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -161,6 +162,19 @@ function addLayers() {
     },
     paint: { 'text-color': css('--ink'), 'text-halo-color': css('--halo'), 'text-halo-width': 1.6 },
   });
+  // "Quiero ir": un anillo ambar con estrella, distinto del punto lleno de lo visitado.
+  map.addSource('wishes', { type: 'geojson', data: wishGeo(), promoteId: 'id' });
+  map.addLayer({
+    id: 'wish-dot',
+    type: 'circle',
+    source: 'wishes',
+    paint: {
+      'circle-radius': ['case', ['boolean', ['feature-state', 'hover'], false], 9, 7],
+      'circle-color': css('--card-solid'),
+      'circle-stroke-width': 3,
+      'circle-stroke-color': '#f59e0b',
+    },
+  }, 'pins-dot');
   // El globo en el mundo: se entiende de un vistazo donde queda cada cosa.
   map.setProjection({ type: 'globe' });
   applyFilters();
@@ -206,7 +220,7 @@ tip.className = 'tip';
 tip.hidden = true;
 document.body.append(tip);
 
-const PICK = ['pins-dot', 'city-fill', 'adm1-fill', 'world-fill'];
+const PICK = ['pins-dot', 'wish-dot', 'city-fill', 'adm1-fill', 'world-fill'];
 const pick = (point) => map.queryRenderedFeatures(point, { layers: PICK.filter((l) => map.getLayer(l)) })[0];
 const featureId = (f) => f.properties.id ?? f.properties.iso;
 let hovered = null;
@@ -234,6 +248,7 @@ map.on('click', (e) => {
   const f = pick(e.point);
   if (!f) return;
   if (f.layer.id === 'pins-dot') return openPinPopup(Number(f.properties.id));
+  if (f.layer.id === 'wish-dot') return openWishPopup(Number(f.properties.id));
   go(featureId(f));
 });
 
@@ -275,6 +290,20 @@ function openPinPopup(id, { fly: doFly = false } = {}) {
     .setHTML(pinCard(pin, { inVisit: state.visit === pin.visitId }))
     .addTo(map);
   popup.on('close', () => map.getSource('pins') && map.setFeatureState({ source: 'pins', id }, { selected: false }));
+}
+
+function openWishPopup(id) {
+  const w = wishesData.find((x) => x.id === id);
+  if (!w) return;
+  popup?.remove();
+  popup = new maplibregl.Popup({ offset: 14, maxWidth: '290px', className: 'pin-popup' })
+    .setLngLat([w.lng, w.lat])
+    .setHTML(`<div class="pin-card"><span class="pin-kind" style="--k:#f59e0b">♡ Quiero ir</span><strong>${esc(w.name)}</strong>
+      <p>${esc(w.placeName ?? '')}</p>
+      <div class="pin-actions">${w.sourceVisitId ? `<a class="link" href="#/p/${w.sourceVisitId}">Ver la recomendación</a>` : ''}
+      ${w.sourcePinId ? `<button class="link" data-been-wish="${w.id}">✓ Estuve</button>` : ''}
+      <button class="danger-link" data-unwish="${w.id}">Quitar</button></div></div>`)
+    .addTo(map);
 }
 
 function renderPinList() {
@@ -341,6 +370,8 @@ function useMyLocation() {
 }
 
 document.addEventListener('click', async (e) => {
+  // Dentro de una pagina (portada, visita publicada) los botones los atiende js/pages.js.
+  if (e.target.closest('.page')) return;
   if (e.target.closest('[data-pin-add]')) return startPicking({ visitId: state.visit });
   if (e.target.closest('[data-pick-cancel]')) return stopPicking();
   if (e.target.closest('[data-pick-here]')) return useMyLocation();
@@ -377,24 +408,75 @@ addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && picking) stopPicking();
 });
 
+// ---------- Portada: el globo girando ----------
+
+let spinning = false;
+let spinToken = 0;
+let forceFly = false;
+// Gira de a 30° cada 12 s, lineal: se nota que vive sin marear.
+function spin(on) {
+  if (on === spinning) return;
+  spinning = on;
+  const token = ++spinToken;
+  map.stop();
+  if (!on) {
+    forceFly = true; // al salir de la portada el mapa tiene que ir a donde se pidio
+    return;
+  }
+  const pad = wide.matches ? { top: 0, bottom: 0, left: Math.round(innerWidth * 0.42), right: 0 } : { top: 0, bottom: Math.round(innerHeight * 0.3), left: 0, right: 0 };
+  const step = () => {
+    if (!spinning || token !== spinToken) return;
+    const c = map.getCenter();
+    map.easeTo({ center: [c.lng + 30, 12], duration: 12000, easing: (t) => t, padding: pad });
+    map.once('moveend', step);
+  };
+  map.flyTo({ center: [-60, 12], zoom: wide.matches ? 1.9 : 1.05, padding: pad, duration: 1400 });
+  map.once('moveend', step);
+}
+
+// ---------- Quiero ir ----------
+
+let wishesData = [];
+const wishGeo = () => ({
+  type: 'FeatureCollection',
+  features: wishesData
+    .filter((w) => w.lat != null)
+    .map((w) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [w.lng, w.lat] }, properties: { id: w.id, name: w.name } })),
+});
+async function loadWishes() {
+  try {
+    wishesData = account.current() ? (await api('wishes')).wishes : [];
+  } catch {
+    wishesData = [];
+  }
+  map.getSource('wishes')?.setData(wishGeo());
+}
+const wishFor = (placeId) => wishesData.find((w) => w.placeId === placeId && w.lat == null);
+
 // ---------- Navegacion ----------
 
+// go(null) es el mundo (el globo); la portada es '#/'.
 function go(path) {
-  location.hash = path ? `#/${path}` : '#/';
+  location.hash = path ? `#/${path}` : '#/mundo';
 }
 
 const find = (fc, id) => fc?.features.filter((f) => (f.properties.id ?? f.properties.iso) === id) ?? [];
 
 // "NIC.granada.granada/v/12/editar" -> { place, visit: 12, edit: true }
+//   '#/' portada · '#/mundo' el globo · '#/p/12' una visita publicada
 function parseRoute(hash) {
   const [place, v, id, action] = decodeURIComponent(hash.replace(/^#\/?/, '')).split('/');
+  if (!place) return { page: 'home' };
+  if (place === 'p') return { page: 'public', id: Number(v) || null };
+  if (place === 'mundo') return { place: null, visit: null, edit: false };
   const visit = v === 'v' ? (id === 'nueva' ? 'new' : Number(id) || null) : null;
   return { place: place || null, visit, edit: visit === 'new' || action === 'editar' };
 }
 
 let editHash = null;
 
-async function show({ place: id, visit, edit }) {
+async function show(route) {
+  const { place: id, visit, edit } = route;
   // Salir del modo escritura navegando (atras del telefono, un enlace): con
   // cambios sin guardar se pregunta, y si la persona se queda se vuelve al editor.
   if (edit && typeof visit === 'number') editHash = location.hash;
@@ -405,6 +487,33 @@ async function show({ place: id, visit, edit }) {
     }
     closeWriter(true);
   }
+
+  // Paginas sobre el mapa: la portada (con el globo girando detras) y lo publicado.
+  if (route.page === 'home') {
+    popup?.remove();
+    stopPicking();
+    Object.assign(state, { iso: null, adm1: null, city: null, adm1Data: null, cities: null, visit: null, edit: false });
+    if (map.getSource('adm1')) {
+      map.getSource('adm1').setData(EMPTY);
+      map.getSource('city').setData(EMPTY);
+      map.getSource('labels').setData(EMPTY);
+      applyFilters();
+      applyStates();
+    }
+    pinsKey = '';
+    pinsData = [];
+    map.getSource('pins')?.setData(EMPTY);
+    renderHome({ go, countVisited: () => world.features.filter((f) => visits.has(f.properties.iso)).length, wishes: () => wishesData });
+    spin(true);
+    return;
+  }
+  spin(false);
+  if (route.page === 'public') {
+    renderPublicVisit(route.id, { go, openViewer: (photos, i) => openPhoto(i, { photos, readOnly: true }) });
+    return;
+  }
+  closePage();
+
   const iso = id ? geo.isoOf(id) : null;
   if (iso && !countryName.has(iso)) return go(null);
   const parts = id ? id.split('.') : [];
@@ -428,7 +537,8 @@ async function show({ place: id, visit, edit }) {
     applyStates();
   }
   // Abrir una visita no mueve el mapa: el lugar ya esta a la vista.
-  if (!samePlace) fly();
+  if (!samePlace || forceFly) fly();
+  forceFly = false;
   stopPicking();
   popup?.remove();
   renderCrumbs();
@@ -527,7 +637,13 @@ function renderPanel() {
       (account.current()
         ? `<div class="big"><b>${visited.length}</b> ${visited.length === 1 ? 'país visitado' : 'países visitados'}</div>` +
           (visited.length ? list(visited.map((f) => ({ properties: { id: f.properties.iso, name: f.properties.name } }))) : '') +
-          '<p class="note">Toca un país en el globo o búscalo arriba.</p>'
+          '<p class="note">Toca un país en el globo o búscalo arriba.</p>' +
+          (wishesData.length
+            ? `<div class="visits-head"><h2>Quiero ir <span class="count">${wishesData.length}</span></h2></div><ul class="pin-list">${wishesData
+                .slice(0, 30)
+                .map((w) => `<li><button data-go="${esc(w.placeId)}"><span class="pin-emoji" style="--k:#f59e0b">♡</span><span><b>${esc(w.name)}</b><small>${esc(w.placeName ?? '')}</small></span></button></li>`)
+                .join('')}</ul>`
+            : '')
         : `<p class="note">Recorre el mundo, marca los lugares donde estuviste y escribe lo que hiciste en cada uno.</p>
            <div class="actions start"><button class="primary" data-auth="signup">Crear cuenta</button><button class="secondary" data-auth="login">Entrar</button></div>`);
     return;
@@ -542,13 +658,50 @@ function renderPanel() {
       body += stat(plural(l2), visits.countUnder(state.adm1, 2), state.cities.features.length);
     }
   } else {
-    body += toggleButton(here());
+    const wish = wishFor(here());
+    body += `<div class="actions start tight">${toggleButton(here())}${
+      account.current() && !visits.has(here())
+        ? wish
+          ? `<button class="secondary" data-unwish="${wish.id}">♥ En "Quiero ir" · quitar</button>`
+          : '<button class="secondary" data-wish-place>♡ Quiero ir</button>'
+        : ''
+    }</div>`;
     if (state.iso && !state.adm1Data) body += '<p class="note">No hay divisiones de este país en los datos abiertos, así que se marca entero.</p>';
   }
   body += '<section id="visits" class="visits"></section>';
+  body += '<section id="recs" class="visits"></section>';
   if (!isLeaf()) body += list(state.adm1 ? state.cities.features : state.adm1Data.features);
   panel.innerHTML = body;
   renderVisitList();
+  renderRecs();
+}
+
+// Lo que otras personas publicaron dentro del lugar abierto: "recomendado aqui".
+async function renderRecs() {
+  const box = $('#recs');
+  const place = here();
+  if (!box || !place) return;
+  let pins;
+  try {
+    pins = (await api('public', { query: { under: place } })).pins;
+  } catch {
+    return;
+  }
+  if (here() !== place || state.visit || !pins.length) return;
+  const me = account.current();
+  const others = pins.filter((p) => !me || p.author !== me.name);
+  if (!others.length) return;
+  box.innerHTML =
+    `<div class="visits-head"><h2>Recomendado aquí <span class="count">${others.length}</span></h2></div><ul class="pin-list recs">` +
+    others
+      .slice(0, 20)
+      .map((p) => {
+        const k = kindOf(p.kind);
+        return `<li><a href="#/p/${p.visitId}" class="rec-row"><span class="pin-emoji" style="--k:${k.color}">${k.emoji}</span><span><b>${esc(p.name)}</b><small>@${esc(p.author)} · ${esc(p.visitTitle)}</small></span></a>
+          <div class="place-chip-actions"><button class="chip-btn" data-want-pin="${p.id}">♡ Quiero ir</button><button class="chip-btn" data-been-pin="${p.id}" data-been-title="${esc(p.name)}">✓ Estuve</button></div></li>`;
+      })
+      .join('') +
+    '</ul>';
 }
 
 // Las visitas del lugar abierto, o de todo lo que tiene adentro. Se piden aparte
@@ -635,6 +788,9 @@ async function renderVisit(panel) {
     `<article class="story">${story || `<p class="note">Sin relato todavía. <button class="link" data-go="${esc(place)}/v/${v.id}/editar">Escribirlo</button></p>`}</article>` +
     `<div class="actions start"><button class="primary" data-go="${esc(place)}/v/${v.id}/editar">✎ Escribir</button>` +
     `<button class="danger-link" data-delete="${v.id}">Borrar</button></div>` +
+    (v.publishedAt
+      ? `<div class="publish on"><span>🌎 <b>Publicada</b>: la ve cualquiera.</span><a class="link" href="#/p/${v.id}">Ver página pública</a><button class="link" data-publish="0" data-visit="${v.id}">Dejar de publicar</button></div>`
+      : `<div class="publish"><button class="secondary" data-publish="1" data-visit="${v.id}">🌎 Publicar como recomendación</button></div>`) +
     `<section class="gallery" id="gallery" aria-label="Fotos"></section>` +
     `<section class="pins" id="pins" aria-label="Lugares"></section>`;
   paintGallery($('#gallery'));
@@ -740,7 +896,8 @@ document.addEventListener('change', async (e) => {
 });
 
 // Vista en grande: flechas, Escape, pie de foto y borrar.
-function openPhoto(index) {
+// readOnly: fotos de otra persona (una visita publicada): sin editar ni borrar.
+function openPhoto(index, { photos: list = gallery.photos, readOnly = false } = {}) {
   const back = document.createElement('div');
   back.className = 'lightbox';
   back.setAttribute('role', 'dialog');
@@ -749,18 +906,20 @@ function openPhoto(index) {
   document.body.append(back);
   let i = index;
   const paint = () => {
-    const p = gallery.photos[i];
+    const p = list[i];
     if (!p) return close();
-    const when = p.takenAt ? new Date(p.takenAt).toLocaleString('es', { dateStyle: 'long', timeStyle: 'short' }) : '';
+    const when = p.takenAt
+      ? new Date(p.takenAt).toLocaleString('es', { dateStyle: 'long', timeStyle: 'short' })
+      : p.takenOn ? new Date(`${p.takenOn}T12:00:00`).toLocaleDateString('es', { dateStyle: 'long' }) : '';
     back.innerHTML = `
       <button class="lb-close" data-lb="close" aria-label="Cerrar">✕</button>
-      ${gallery.photos.length > 1 ? '<button class="lb-nav prev" data-lb="prev" aria-label="Anterior">‹</button><button class="lb-nav next" data-lb="next" aria-label="Siguiente">›</button>' : ''}
+      ${list.length > 1 ? '<button class="lb-nav prev" data-lb="prev" aria-label="Anterior">‹</button><button class="lb-nav next" data-lb="next" aria-label="Siguiente">›</button>' : ''}
       <figure><img src="${esc(p.urls.full)}" alt="${esc(p.caption ?? '')}">
         <figcaption>
-          <input class="lb-caption" value="${esc(p.caption ?? '')}" placeholder="Escribe un pie de foto…" maxlength="300" aria-label="Pie de foto">
-          <span class="lb-meta">${esc(when)}${when ? ' · ' : ''}${i + 1} de ${gallery.photos.length}</span>
-          ${p.lat != null ? '<button class="link light" data-lb="pin">📍 Marcar como lugar</button>' : ''}
-          <button class="danger-link" data-lb="delete">Borrar foto</button>
+          ${readOnly ? (p.caption ? `<p class="lb-caption-ro">${esc(p.caption)}</p>` : '') : `<input class="lb-caption" value="${esc(p.caption ?? '')}" placeholder="Escribe un pie de foto…" maxlength="300" aria-label="Pie de foto">`}
+          <span class="lb-meta">${esc(when)}${when ? ' · ' : ''}${i + 1} de ${list.length}</span>
+          ${!readOnly && p.lat != null ? '<button class="link light" data-lb="pin">📍 Marcar como lugar</button>' : ''}
+          ${readOnly ? '' : '<button class="danger-link" data-lb="delete">Borrar foto</button>'}
         </figcaption>
       </figure>`;
   };
@@ -769,7 +928,7 @@ function openPhoto(index) {
     back.remove();
   };
   const move = (d) => {
-    i = (i + d + gallery.photos.length) % gallery.photos.length;
+    i = (i + d + list.length) % list.length;
     paint();
   };
   const onKey = (e) => {
@@ -789,7 +948,7 @@ function openPhoto(index) {
     if (act === 'next') return move(1);
     if (act === 'pin') {
       // El GPS de la foto dice donde estabas: el lugar sale de ahi.
-      const p = gallery.photos[i];
+      const p = list[i];
       close();
       const pin = await pinForm({ visitId: gallery.visitId, lat: p.lat, lng: p.lng, name: p.caption ?? '' });
       if (pin) {
@@ -802,10 +961,10 @@ function openPhoto(index) {
     if (act === 'delete') {
       if (!(await ask({ title: '¿Borrar esta foto?', text: 'No se puede deshacer.', ok: 'Borrar', danger: true }))) return;
       try {
-        await api('photos', { method: 'DELETE', query: { id: gallery.photos[i].id } });
-        gallery.photos.splice(i, 1);
-        if (!gallery.photos.length) close();
-        else move(i >= gallery.photos.length ? -1 : 0);
+        await api('photos', { method: 'DELETE', query: { id: list[i].id } });
+        list.splice(i, 1);
+        if (!list.length) close();
+        else move(i >= list.length ? -1 : 0);
         const box = $('#gallery');
         if (box) paintGallery(box);
         toast('Foto borrada.');
@@ -817,7 +976,7 @@ function openPhoto(index) {
   // El pie se guarda al salir del campo, sin boton: es lo que uno espera al escribir debajo de una foto.
   back.addEventListener('focusout', async (e) => {
     if (!e.target.matches('.lb-caption')) return;
-    const p = gallery.photos[i];
+    const p = list[i];
     const caption = e.target.value.trim();
     if (caption === (p.caption ?? '')) return;
     try {
@@ -858,7 +1017,7 @@ document.addEventListener('click', async (e) => {
   if (photo) return openPhoto(Number(photo.dataset.photo));
   // Una foto dentro del relato abre la misma vista en grande, en su lugar de la galeria.
   const storyPhoto = e.target.closest('[data-story-photo]');
-  if (storyPhoto) {
+  if (storyPhoto && !storyPhoto.closest('.page')) {
     const i = gallery.photos.findIndex((p) => p.id === Number(storyPhoto.dataset.storyPhoto));
     if (i >= 0) openPhoto(i);
     return;
@@ -898,6 +1057,66 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// ---------- Publicar y "Quiero ir" (en el panel) ----------
+
+document.addEventListener('click', async (e) => {
+  if (e.target.closest('.page')) return;
+  const pub = e.target.closest('[data-publish]');
+  if (pub) {
+    const on = pub.dataset.publish === '1';
+    if (on && !(await ask({
+      title: '¿Publicar esta visita?',
+      text: 'La podrá ver cualquiera, con o sin cuenta: el título, el relato, las fotos y los lugares, firmados con tu usuario. No se publica el GPS de las fotos ni tus otras visitas. La puedes dejar de publicar cuando quieras.',
+      ok: 'Publicar',
+    }))) return;
+    await busy(pub, async () => {
+      try {
+        await api('visits', { method: 'PUT', query: { id: pub.dataset.visit, publish: 1 }, body: { published: on } });
+        toast(on ? 'Publicada. Ya aparece en la portada.' : 'Ya no está publicada.');
+        renderPanel();
+      } catch (ex) {
+        toast(ex.message, 'err');
+      }
+    });
+    return;
+  }
+  if (e.target.closest('[data-wish-place]')) {
+    const w = await wantToGo({ placeId: here(), placeName: placeName() });
+    if (w) await loadWishes(), renderPanel();
+    return;
+  }
+  const unwish = e.target.closest('[data-unwish]');
+  if (unwish) {
+    try {
+      await api('wishes', { method: 'DELETE', query: { id: unwish.dataset.unwish } });
+      popup?.remove();
+      await loadWishes();
+      renderPanel();
+      toast('Quitado de "Quiero ir".');
+    } catch (ex) {
+      toast(ex.message, 'err');
+    }
+    return;
+  }
+  const want = e.target.closest('[data-want-pin]');
+  if (want) {
+    if (await wantToGo({ pinId: Number(want.dataset.wantPin) })) {
+      want.textContent = '♥ En tu lista';
+      want.classList.add('done');
+      loadWishes();
+    }
+    return;
+  }
+  const been = e.target.closest('[data-been-pin]');
+  if (been) return beenThere({ pinId: Number(been.dataset.beenPin), title: been.dataset.beenTitle, go });
+  const beenWish = e.target.closest('[data-been-wish]');
+  if (beenWish) {
+    const w = wishesData.find((x) => x.id === Number(beenWish.dataset.beenWish));
+    popup?.remove();
+    if (w) beenThere({ pinId: w.sourcePinId, title: w.name, go });
+  }
+});
+
 // ---------- Cuenta ----------
 
 const accountBtn = $('#account');
@@ -912,7 +1131,10 @@ account.onChange(async (me) => {
   renderAccountButton();
   if (me) await visits.load().catch((e) => toast(e.message, 'err'));
   else visits.clear();
+  await loadWishes();
   applyStates();
+  // En una pagina (portada, publicada) se rehace entera: cambian los botones y "tu mapa".
+  if (document.body.classList.contains('on-page')) return show(parseRoute(location.hash));
   renderPanel();
   loadPins();
 });
@@ -1021,6 +1243,13 @@ results.addEventListener('mousedown', (e) => {
 });
 q.addEventListener('blur', () => setTimeout(() => { hits = []; paintResults(); }, 100));
 
+// Algo cambio lo visitado o "Quiero ir" desde una pagina (portada, publicada).
+addEventListener('tt:data-changed', async () => {
+  await Promise.all([visits.refresh().catch(() => {}), loadWishes()]);
+  applyStates();
+});
+
 // ---------- Arranque ----------
 
+await loadWishes();
 show(parseRoute(location.hash));

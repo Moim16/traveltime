@@ -7,8 +7,8 @@
 //                                      (para verlos en el mapa)
 //
 // Que sale y que no lo decide api/_lib/public.js.
-// Las respuestas se cachean 60 s en el CDN de Vercel: las URL de las fotos
-// vienen firmadas por 4 horas, asi que un minuto de cache no las deja vencidas.
+// El CDN de Vercel guarda las respuestas un minuto: las URL de las fotos vienen
+// firmadas por 4 horas, asi que no quedan vencidas. El navegador no las guarda.
 
 import { db, ensureSchema } from './_lib/db.js';
 import { parseId, parsePlace } from './_lib/http.js';
@@ -39,12 +39,20 @@ export default async function handler(req, res) {
     }
     await ensureSchema();
     const q = req.query ?? {};
-    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    // Dos caches distintas, con dos cabeceras distintas:
+    //  - El navegador NO guarda (no-cache). Con stale-while-revalidate en
+    //    Cache-Control, Chrome mostraba una visita ya despublicada hasta 5
+    //    minutos mientras revalidaba por detras.
+    //  - El CDN de Vercel si guarda un minuto (Vercel-CDN-Cache-Control solo lo
+    //    lee el CDN y no llega al navegador). Despublicar tarda <= 60 s en el CDN.
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Vercel-CDN-Cache-Control', 'max-age=60, stale-while-revalidate=300');
 
     if (q.visit) {
       const v = await publishedVisit(parseId(q.visit));
       if (!v) {
         res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Vercel-CDN-Cache-Control', 'no-store'); // un 404 guardado ocultaria una visita recien publicada
         return res.status(404).json({ error: 'Esta visita no existe o ya no está publicada.' });
       }
       return res.status(200).json({ visit: v });
@@ -99,6 +107,7 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('[api/public]', err);
     res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Vercel-CDN-Cache-Control', 'no-store'); // un 404 guardado ocultaria una visita recien publicada
     return res.status(500).json({ error: 'Algo falló en el servidor.' });
   }
 }

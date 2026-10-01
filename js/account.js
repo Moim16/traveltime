@@ -97,8 +97,10 @@ const VIEWS = {
 // reason: por que se pide entrar ("Entra para marcar lugares"), si aplica.
 export function openAuth(view = 'login', reason = '') {
   const { root, close } = modal('', { label: 'Cuenta' });
+  // El motivo ("Crea tu cuenta para guardar…") se ve en entrar y en crear cuenta,
+  // que son a donde lleva tocar algo que pide cuenta.
   const show = (name, arg) => {
-    root.innerHTML = (reason && name === 'login' ? `<p class="reason">${esc(reason)}</p>` : '') + VIEWS[name](arg);
+    root.innerHTML = (reason && (name === 'login' || name === 'signup') ? `<p class="reason">${esc(reason)}</p>` : '') + VIEWS[name](arg);
     root.querySelector('[autofocus]')?.focus();
   };
   show(view);
