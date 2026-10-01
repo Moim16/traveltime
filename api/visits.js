@@ -3,15 +3,18 @@
 //  GET    /api/visits?under=NIC        -> { visits } mias en ese lugar o dentro de el,
 //                                         las mas recientes primero (sin el texto)
 //  GET    /api/visits?id=12            -> { visit } con el texto
-//  POST   /api/visits                  { placeId, placeName, title, startDay, endDay, body }
+//  POST   /api/visits                  { placeId, placeName, title, startDay, endDay, body, fromPinId }
+//                                         fromPinId: "ya estuve" desde una recomendacion; la visita
+//                                         nueva lleva ese lugar (solo nombre, tipo y ubicacion)
 //  PUT    /api/visits?id=12            { title, startDay, endDay, body } (placeId no
 //                                         cambia: mover una visita es borrarla y crearla)
+//  PUT    /api/visits?id=12&publish=1  { published } publicar o dejar de publicar
 //  DELETE /api/visits?id=12              (se lleva sus fotos, tambien de Cloudflare)
 //
 // La lista trae de cada visita cuantas fotos tiene y la primera como portada.
 //
 // Todo es de quien lo escribio: una visita de otra persona responde 404, igual
-// que una que no existe. Compartir llega en la fase 3.
+// que una que no existe. Lo que se ve de una visita publicada lo decide api/_lib/public.js.
 
 import { db, ensureSchema, nowIso } from './_lib/db.js';
 import { readJson, clean, parseDay, parseId, parsePlace } from './_lib/http.js';
@@ -22,7 +25,7 @@ import { parseStory, readStory } from './_lib/story.js';
 
 const TITLE_MAX = 120;
 
-const publicVisit = (v, withBody) => ({
+const ownVisit = (v, withBody) => ({
   id: Number(v.id),
   placeId: v.placeId,
   placeName: v.placeName ?? null,
@@ -34,6 +37,7 @@ const publicVisit = (v, withBody) => ({
   ...('photoCount' in v
     ? { photoCount: Number(v.photoCount), cover: v.coverCfId && imagesReady() ? signedUrl(v.coverCfId, 'ttcard') : null }
     : {}),
+  publishedAt: v.publishedAt ?? null,
   createdAt: v.createdAt,
   updatedAt: v.updatedAt,
 });
@@ -67,7 +71,7 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET' && q.id) {
       const v = await mine(me.id, parseId(q.id));
-      return v ? res.status(200).json({ visit: publicVisit(v, true) }) : notYours(res);
+      return v ? res.status(200).json({ visit: ownVisit(v, true) }) : notYours(res);
     }
 
     if (req.method === 'GET') {
@@ -84,12 +88,22 @@ export default async function handler(req, res) {
               ORDER BY COALESCE(v.startDay, substr(v.createdAt, 1, 10)) DESC, v.id DESC LIMIT 200`,
         args: [me.id, under, `${under.replace(/[\\%_]/g, '\\$&')}.%`],
       });
-      return res.status(200).json({ visits: rs.rows.map((v) => publicVisit(v, false)) });
+      return res.status(200).json({ visits: rs.rows.map((v) => ownVisit(v, false)) });
     }
 
     if (req.method === 'POST') {
       const body = await readJson(req);
-      const placeId = parsePlace(body.placeId);
+      // Ya estuve: el lugar de una recomendacion publicada (o uno mio). Se copia
+      // solo lo que es del lugar; el relato, las fotos y las fechas son mios.
+      let fromPin = null;
+      if (body.fromPinId) {
+        fromPin = (await db.execute({
+          sql: 'SELECT p.name, p.kind, p.lat, p.lng, v.placeId, v.placeName FROM pins p JOIN visits v ON v.id = p.visitId WHERE p.id = ? AND (v.publishedAt IS NOT NULL OR v.userId = ?)',
+          args: [parseId(body.fromPinId), me.id],
+        })).rows[0];
+        if (!fromPin) return notYours(res);
+      }
+      const placeId = parsePlace(body.placeId) ?? fromPin?.placeId ?? null;
       if (!placeId) return res.status(400).json({ error: 'Lugar inválido.' });
       const f = parseFields(body);
       if (!f.ok) return res.status(400).json({ error: f.error });
@@ -97,9 +111,29 @@ export default async function handler(req, res) {
       const ins = await db.execute({
         sql: `INSERT INTO visits (userId, placeId, placeName, title, startDay, endDay, body, createdAt, updatedAt)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [me.id, placeId, clean(body.placeName, 200), f.value.title, f.value.startDay, f.value.endDay, f.value.body, now, now],
+        args: [me.id, placeId, clean(body.placeName, 200) ?? fromPin?.placeName ?? null, f.value.title, f.value.startDay, f.value.endDay, f.value.body, now, now],
       });
-      return res.status(201).json({ visit: publicVisit(await mine(me.id, Number(ins.lastInsertRowid)), true) });
+      const newId = Number(ins.lastInsertRowid);
+      if (fromPin) {
+        await db.execute({
+          sql: 'INSERT INTO pins (userId, visitId, name, kind, lat, lng, note, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)',
+          args: [me.id, newId, fromPin.name, fromPin.kind, fromPin.lat, fromPin.lng, now, now],
+        });
+      }
+      return res.status(201).json({ visit: ownVisit(await mine(me.id, newId), true) });
+    }
+
+    if (req.method === 'PUT' && q.publish) {
+      const id = parseId(q.id);
+      const v = id && (await mine(me.id, id));
+      if (!v) return notYours(res);
+      const on = Boolean((await readJson(req)).published);
+      // Si ya estaba publicada, conserva su fecha: tocar el boton otra vez no la sube al tope.
+      await db.execute({
+        sql: "UPDATE visits SET publishedAt = ?, privacy = ? WHERE id = ? AND userId = ?",
+        args: [on ? v.publishedAt ?? nowIso() : null, on ? 'public' : 'private', id, me.id],
+      });
+      return res.status(200).json({ visit: ownVisit(await mine(me.id, id), true) });
     }
 
     if (req.method === 'PUT') {
@@ -111,7 +145,7 @@ export default async function handler(req, res) {
         sql: 'UPDATE visits SET title = ?, startDay = ?, endDay = ?, body = ?, updatedAt = ? WHERE id = ? AND userId = ?',
         args: [f.value.title, f.value.startDay, f.value.endDay, f.value.body, nowIso(), id, me.id],
       });
-      return res.status(200).json({ visit: publicVisit(await mine(me.id, id), true) });
+      return res.status(200).json({ visit: ownVisit(await mine(me.id, id), true) });
     }
 
     if (req.method === 'DELETE') {

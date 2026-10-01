@@ -42,6 +42,8 @@ const handlers = {
   visits: (await import('../api/visits.js')).default,
   photos: (await import('../api/photos.js')).default,
   pins: (await import('../api/pins.js')).default,
+  public: (await import('../api/public.js')).default,
+  wishes: (await import('../api/wishes.js')).default,
 };
 const { db } = await import('../api/_lib/db.js');
 const crypto = await import('node:crypto');
@@ -50,13 +52,14 @@ async function call(name, method, { query = {}, body, token } = {}) {
   const req = { method, query, body: body ?? {}, headers: token ? { 'x-session-token': token } : {} };
   let status = 200;
   let data;
+  const headers = {};
   const res = {
     status(c) { status = c; return res; },
     json(d) { data = d; return res; },
-    setHeader() {},
+    setHeader(k, v) { headers[k.toLowerCase()] = v; },
   };
   await handlers[name](req, res);
-  return { status, data };
+  return { status, data, headers };
 }
 
 let passed = 0;
@@ -264,6 +267,66 @@ await db.execute({ sql: "UPDATE photos SET createdAt = '2020-01-01T00:00:00.000Z
 await call('photos', 'POST', { token: A, query: { upload: 1 }, body: { visitId: V1 } });
 check('la subida abandonada se borro, tambien en Cloudflare', cf.deleted.includes('cf-3') &&
   !(await db.execute({ sql: 'SELECT 1 FROM photos WHERE id = ?', args: [stale.data.photo.id] })).rows.length);
+
+// ---------------------------------------------------------------- publicar
+const pub = (query) => call('public', 'GET', { query });
+check('sin publicar no sale en la portada', (await pub({ home: 1 })).data.recommendations.length === 0);
+check('sin publicar, la visita publica es 404', (await pub({ visit: V1 })).status === 404);
+check('otra persona no puede publicar mi visita (404)',
+  (await call('visits', 'PUT', { token: B, query: { id: V1, publish: 1 }, body: { published: true } })).status === 404);
+check('sin publicar, nadie copia mis lugares',
+  (await call('wishes', 'POST', { token: B, body: { fromPinId: PIN1 } })).status === 404 &&
+  (await call('visits', 'POST', { token: B, body: { fromPinId: PIN1, title: 'x' } })).status === 404);
+
+const pv1 = await call('visits', 'PUT', { token: A, query: { id: V1, publish: 1 }, body: { published: true } });
+check('publicar', pv1.status === 200 && pv1.data.visit.publishedAt, pv1.data);
+const firstPublished = pv1.data.visit.publishedAt;
+check('publicar otra vez conserva la fecha',
+  (await call('visits', 'PUT', { token: A, query: { id: V1, publish: 1 }, body: { published: true } })).data.visit.publishedAt === firstPublished);
+
+const home = await pub({ home: 1 });
+const card = home.data.recommendations[0];
+check('la portada trae la recomendacion con autor, portada y conteos',
+  card?.id === V1 && card.author === 'moises' && card.cover?.includes('/ttcard') && card.photoCount === 1 && card.pinCount >= 1, card);
+check('la portada trae los ultimos lugares', home.data.places.some((p) => p.id === PIN1 && p.author === 'moises'));
+check('la portada trae cuantos paises', home.data.stats.countries === 1 && home.data.stats.visits === 1, home.data.stats);
+check('la portada se cachea en el CDN', /s-maxage=60/.test(home.headers['cache-control']), home.headers);
+check('un 404 publico no se cachea (al publicar aparece al tiro)', (await pub({ visit: 99999 })).headers['cache-control'] === 'no-store');
+
+const pubVisit = await pub({ visit: V1 });
+const json = JSON.stringify(pubVisit.data);
+check('la visita publica trae relato, fotos y lugares', pubVisit.data.visit?.body?.blocks?.length && pubVisit.data.visit.photos.length === 1 && pubVisit.data.visit.pins.length >= 1);
+check('lo publicado no trae el GPS de las fotos', !('lat' in pubVisit.data.visit.photos[0]) && !('lng' in pubVisit.data.visit.photos[0]));
+check('lo publicado no trae la hora exacta de las fotos', !('takenAt' in pubVisit.data.visit.photos[0]) && pubVisit.data.visit.photos[0].takenOn === '2025-04-17');
+check('lo publicado no trae correo, nombre completo ni ids de usuario',
+  !/Moisés|@example|userId|email|fullName|cfId|passwordHash/.test(json), json.match(/Moisés|@example|userId|email|fullName|cfId|passwordHash/)?.[0]);
+check('lugares publicados dentro de Nicaragua', (await pub({ under: 'NIC' })).data.pins.some((p) => p.id === PIN1));
+check('feed paginado', (await pub({ feed: 1 })).data.visits.length === 1);
+
+// Quiero ir / ya estuve, desde la cuenta de otra persona
+const w1 = await call('wishes', 'POST', { token: B, body: { fromPinId: PIN1 } });
+check('quiero ir desde un lugar publicado', w1.status === 201 && w1.data.wish.name === 'Convento' && w1.data.wish.lat === 11.9312 && w1.data.wish.placeId === 'NIC.granada.granada', w1.data);
+check('quiero ir dos veces no duplica', (await call('wishes', 'POST', { token: B, body: { fromPinId: PIN1 } })).data.already === true);
+check('quiero ir un municipio entero', (await call('wishes', 'POST', { token: B, body: { placeId: 'NIC.masaya.masaya', placeName: 'Masaya, Masaya, Nicaragua' } })).data.wish?.name === 'Masaya');
+check('mi lista tiene los dos', (await call('wishes', 'GET', { token: B })).data.wishes.length === 2);
+check('la lista de otro no la veo', (await call('wishes', 'GET', { token: A })).data.wishes.length === 0);
+check('no borro lo de otro (404)', (await call('wishes', 'DELETE', { token: A, query: { id: w1.data.wish.id } })).status === 404);
+
+const ya = await call('visits', 'POST', { token: B, body: { fromPinId: PIN1, title: 'Mi Granada' } });
+check('ya estuve: crea MI visita en ese municipio', ya.status === 201 && ya.data.visit.placeId === 'NIC.granada.granada' && ya.data.visit.title === 'Mi Granada', ya.data);
+check('...sin el relato de la otra persona', ya.data.visit.body === null);
+const yaPins = (await call('pins', 'GET', { token: B, query: { visit: ya.data.visit.id } })).data.pins;
+check('...con el lugar copiado, sin su nota', yaPins.length === 1 && yaPins[0].name === 'Convento' && yaPins[0].lat === 11.9312 && yaPins[0].note === null, yaPins);
+check('...y sin sus fotos', (await call('photos', 'GET', { token: B, query: { visit: ya.data.visit.id } })).data.photos.length === 0);
+const original = (await pub({ visit: V1 })).data.visit.pins.find((p) => p.id === PIN1);
+check('el lugar original conserva su nota (no se copio, no se toco)', original?.note === 'Museo y vista desde la torre', original);
+
+const unpub = await call('visits', 'PUT', { token: A, query: { id: V1, publish: 1 }, body: { published: false } });
+check('dejar de publicar', unpub.data.visit.publishedAt === null);
+check('despublicada ya no sale', (await pub({ visit: V1 })).status === 404 && (await pub({ home: 1 })).data.recommendations.length === 0);
+check('lo que la otra persona ya guardo se queda (es suyo)', (await call('wishes', 'GET', { token: B })).data.wishes.length === 2);
+check('borrar de la lista', (await call('wishes', 'DELETE', { token: B, query: { placeId: 'NIC.masaya.masaya' } })).status === 200 &&
+  (await call('wishes', 'GET', { token: B })).data.wishes.length === 1);
 
 check('borrar visita', (await call('visits', 'DELETE', { token: A, query: { id: V1 } })).status === 200);
 check('borrar la visita se lleva sus fotos de Cloudflare', cf.deleted.includes('cf-1') && cf.deleted.includes('cf-4'), cf.deleted);

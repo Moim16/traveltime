@@ -156,6 +156,36 @@ async function initSchema() {
       updatedAt TEXT NOT NULL
     )`);
   await db.execute('CREATE INDEX IF NOT EXISTS idx_pins_visit ON pins (visitId)');
+
+  // Publicar una visita: la ve cualquiera, con o sin cuenta. publishedAt NULL =
+  // privada (lo de siempre). Se publica a mano, visita por visita: lo demas de
+  // la cuenta (otras visitas, lo marcado, el GPS de las fotos) nunca sale.
+  try {
+    await db.execute('ALTER TABLE visits ADD COLUMN publishedAt TEXT');
+  } catch {
+    /* ya existe */
+  }
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_visits_published ON visits (publishedAt) WHERE publishedAt IS NOT NULL');
+
+  // "Quiero ir": lugares pendientes. Salen de una recomendacion (se copia SOLO
+  // la ubicacion y el nombre: lo demas es de quien la escribio) o se marcan a mano.
+  // lat/lng NULL = el municipio entero, sin un punto concreto.
+  // sourcePinId: de que pin publicado salio, para no agregarlo dos veces.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS wishes (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      placeId     TEXT NOT NULL,
+      placeName   TEXT,
+      name        TEXT NOT NULL,
+      kind        TEXT NOT NULL DEFAULT 'other',
+      lat         REAL,
+      lng         REAL,
+      sourcePinId INTEGER,
+      sourceVisitId INTEGER,
+      createdAt   TEXT NOT NULL
+    )`);
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_wishes_user ON wishes (userId)');
 }
 
 // Alfabeto sin caracteres que se confundan (nada de I, O, 0, 1).
