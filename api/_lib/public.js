@@ -46,12 +46,16 @@ export const publicCard = (v) => ({
   photoCount: Number(v.photoCount ?? 0),
   pinCount: Number(v.pinCount ?? 0),
   publishedAt: v.publishedAt,
+  trip: v.tripId ? { id: Number(v.tripId), title: v.tripTitle } : null,
 });
 
 // Las columnas de una tarjeta: autor, portada y conteos en una sola consulta.
 export const CARD_SELECT = `
   SELECT v.id, v.title, v.placeId, v.placeName, v.startDay, v.endDay, v.body, v.publishedAt,
          u.name authorName,
+         -- el viaje, solo si tambien esta publicado
+         (SELECT t.id FROM trips t WHERE t.id = v.tripId AND t.publishedAt IS NOT NULL) tripId,
+         (SELECT t.title FROM trips t WHERE t.id = v.tripId AND t.publishedAt IS NOT NULL) tripTitle,
          (SELECT COUNT(*) FROM photos p WHERE p.visitId = v.id AND p.status = 'ready') photoCount,
          (SELECT COUNT(*) FROM pins x WHERE x.visitId = v.id) pinCount,
          (SELECT p.cfId FROM photos p WHERE p.visitId = v.id AND p.status = 'ready' ORDER BY p.position, p.id LIMIT 1) coverCfId

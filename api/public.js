@@ -3,6 +3,7 @@
 //  GET /api/public?home=1           -> { recommendations, places, stats } para la portada
 //  GET /api/public?feed=1&before=…  -> { visits, next } mas recomendaciones (paginado)
 //  GET /api/public?visit=12         -> { visit } una visita publicada completa
+//  GET /api/public?trip=3           -> { trip } un viaje publicado, con sus visitas publicadas
 //  GET /api/public?under=NIC        -> { pins } los lugares publicados dentro de un lugar
 //                                      (para verlos en el mapa)
 //
@@ -13,6 +14,7 @@
 import { db, ensureSchema } from './_lib/db.js';
 import { parseId, parsePlace } from './_lib/http.js';
 import { CARD_SELECT, publicCard, publishedVisit } from './_lib/public.js';
+import { tripVisits } from './_lib/trips.js';
 
 const PAGE = 12;
 
@@ -56,6 +58,32 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: 'Esta visita no existe o ya no está publicada.' });
       }
       return res.status(200).json({ visit: v });
+    }
+
+    if (q.trip) {
+      const t = (await db.execute({
+        sql: `SELECT t.id, t.title, t.summary, t.publishedAt, u.name author FROM trips t JOIN users u ON u.id = t.userId
+              WHERE t.id = ? AND t.publishedAt IS NOT NULL`,
+        args: [parseId(q.trip)],
+      })).rows[0];
+      if (!t) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
+        return res.status(404).json({ error: 'Este viaje no existe o ya no está publicado.' });
+      }
+      // Solo las visitas publicadas, y la tarjeta (fechas, paises, portada) sale
+      // de ellas: con las privadas se filtraria cuando y donde estuvo.
+      const visits = await tripVisits(t.id, { onlyPublished: true });
+      const days = visits.flatMap((v) => [v.startDay, v.endDay]).filter(Boolean).sort();
+      return res.status(200).json({
+        trip: {
+          id: Number(t.id), title: t.title, summary: t.summary ?? null, author: t.author, publishedAt: t.publishedAt,
+          startDay: days[0] ?? null, endDay: days.length > 1 ? days[days.length - 1] : null,
+          visitCount: visits.length, countryCount: new Set(visits.map((v) => v.placeId.slice(0, 3))).size,
+          cover: visits.find((v) => v.cover)?.cover ?? null,
+          visits,
+        },
+      });
     }
 
     if (q.home) {

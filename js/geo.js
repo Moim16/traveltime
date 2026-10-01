@@ -95,5 +95,25 @@ export function bbox(features) {
   return [[big[0], big[1]], [big[2], big[3]]];
 }
 
+// Un punto para ubicar un lugar en el mapa (la ruta de un viaje): el de su
+// nombre en las ciudades y departamentos, el centro de su caja en los paises.
+// [lng, lat] o null si el mapa ya no tiene ese id.
+export async function placePoint(placeId) {
+  const parts = placeId.split('.');
+  try {
+    if (parts.length >= 2) {
+      const fc = parts.length === 3 ? await cities(parts.slice(0, 2).join('.')) : await country(parts[0]);
+      const f = fc.features.find((x) => x.properties.id === placeId);
+      if (f?.properties.lx != null) return [f.properties.lx, f.properties.ly];
+    }
+    const w = (await world()).features.filter((x) => x.properties.iso === parts[0]);
+    if (!w.length) return null;
+    const [[a, b], [c, d]] = bbox(w);
+    return [(a + c) / 2, (b + d) / 2];
+  } catch {
+    return null;
+  }
+}
+
 // "Granada" y "granada" y "Grānada" son lo mismo para quien busca.
 export const fold = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();

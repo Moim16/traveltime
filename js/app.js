@@ -14,7 +14,7 @@ import { KINDS, kindOf, toGeoJSON, pinForm, pinCard } from './pins.js';
 import { esc, toast, ask, busy, formatRange } from './ui.js';
 import { renderStory } from './story.js';
 import { openWriter, closeWriter } from './editor.js';
-import { renderHome, renderPublicVisit, closePage, wantToGo, beenThere } from './pages.js';
+import { renderHome, renderPublicVisit, renderTrip, tripForm, closePage, wantToGo, beenThere } from './pages.js';
 import { BASEMAPS, currentBasemap, setBasemap, tintBasemap } from './basemap.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -463,12 +463,17 @@ const wishGeo = () => ({
 });
 async function loadWishes() {
   try {
-    wishesData = account.current() ? (await api('wishes')).wishes : [];
+    [wishesData, tripsData] = account.current()
+      ? await Promise.all([api('wishes').then((r) => r.wishes), api('trips').then((r) => r.trips)])
+      : [[], []];
   } catch {
     wishesData = [];
+    tripsData = [];
   }
   map.getSource('wishes')?.setData(wishGeo());
 }
+// Mis viajes (para el selector de cada visita y el panel del mundo). Se cargan con "Quiero ir".
+let tripsData = [];
 const wishFor = (placeId) => wishesData.find((w) => w.placeId === placeId && w.lat == null);
 
 // ---------- Navegacion ----------
@@ -486,6 +491,8 @@ function parseRoute(hash) {
   const [place, v, id, action] = decodeURIComponent(hash.replace(/^#\/?/, '')).split('/');
   if (!place) return { page: 'home' };
   if (place === 'p') return { page: 'public', id: Number(v) || null };
+  if (place === 'viaje') return { page: 'trip', id: Number(v) || null };
+  if (place === 't') return { page: 'publicTrip', id: Number(v) || null };
   if (place === 'mundo') return { place: null, visit: null, edit: false };
   const visit = v === 'v' ? (id === 'nueva' ? 'new' : Number(id) || null) : null;
   return { place: place || null, visit, edit: visit === 'new' || action === 'editar' };
@@ -528,6 +535,10 @@ async function show(route) {
   spin(false);
   if (route.page === 'public') {
     renderPublicVisit(route.id, { go, openViewer: (photos, i) => openPhoto(i, { photos, readOnly: true }) });
+    return;
+  }
+  if (route.page === 'trip' || route.page === 'publicTrip') {
+    renderTrip(route.id, { go, isPublic: route.page === 'publicTrip' });
     return;
   }
   closePage();
@@ -695,7 +706,13 @@ function renderPanel() {
                 .slice(0, 30)
                 .map((w) => `<li><button data-go="${esc(w.placeId)}"><span class="pin-emoji" style="--k:#f59e0b">♡</span><span><b>${esc(w.name)}</b><small>${esc(w.placeName ?? '')}</small></span></button></li>`)
                 .join('')}</ul>`
-            : '')
+            : '') +
+          `<div class="visits-head"><h2>Tus viajes${tripsData.length ? ` <span class="count">${tripsData.length}</span>` : ''}</h2><button class="secondary small" data-trip-new>+ Viaje</button></div>` +
+          (tripsData.length
+            ? `<ul class="cards">${tripsData
+                .map((t) => `<li><a class="card${t.cover ? ' with-cover' : ''}" href="#/viaje/${t.id}">${t.cover ? `<img class="card-cover" src="${esc(t.cover)}" alt="" loading="lazy">` : ''}<span class="card-title">🧳 ${esc(t.title)}</span><span class="card-sub">${esc(formatRange(t.startDay, t.endDay))} · ${t.visitCount} ${t.visitCount === 1 ? 'visita' : 'visitas'}${t.publishedAt ? ' · 🌎' : ''}</span></a></li>`)
+                .join('')}</ul>`
+            : '<p class="note">Agrupa tus visitas en viajes: una línea de tiempo con su ruta en el mapa.</p>')
         : `<p class="note">Recorre el mundo, marca los lugares donde estuviste y escribe lo que hiciste en cada uno.</p>
            <div class="actions start"><button class="primary" data-auth="signup">Crear cuenta</button><button class="secondary" data-auth="login">Entrar</button></div>`);
     return;
@@ -851,6 +868,14 @@ async function renderVisit(panel) {
     (v.publishedAt
       ? `<div class="publish on"><span>🌎 <b>Publicada</b>: la ve cualquiera.</span><a class="link" href="#/p/${v.id}">Ver página pública</a><button class="link" data-publish="0" data-visit="${v.id}">Dejar de publicar</button></div>`
       : `<div class="publish"><button class="secondary" data-publish="1" data-visit="${v.id}">🌎 Publicar como recomendación</button></div>`) +
+    // En que viaje esta: una visita va en uno solo (o en ninguno).
+    `<label class="trip-pick">🧳 Viaje
+      <select data-trip-select data-visit="${v.id}" data-current="${v.tripId ?? ''}">
+        <option value="">— Ninguno —</option>
+        ${tripsData.map((t) => `<option value="${t.id}" ${t.id === v.tripId ? 'selected' : ''}>${esc(t.title)}</option>`).join('')}
+        <option value="new">+ Nuevo viaje…</option>
+      </select>
+      ${v.tripId ? `<a class="link" href="#/viaje/${v.tripId}">Ver viaje</a>` : ''}</label>` +
     `<section class="gallery" id="gallery" aria-label="Fotos"></section>` +
     `<section class="pins" id="pins" aria-label="Lugares"></section>`;
   paintGallery($('#gallery'));
@@ -1150,6 +1175,45 @@ document.addEventListener('click', async (e) => {
     } catch (ex) {
       toast(ex.message, 'err');
     }
+  }
+});
+
+// ---------- Viajes (en el panel) ----------
+
+document.addEventListener('change', async (e) => {
+  const sel = e.target.closest('[data-trip-select]');
+  if (!sel) return;
+  const visitId = Number(sel.dataset.visit);
+  const current = sel.dataset.current ? Number(sel.dataset.current) : null;
+  try {
+    if (sel.value === 'new') {
+      const t = await tripForm(null, { visitId });
+      if (!t) {
+        sel.value = current ?? ''; // cancelo: queda como estaba
+        return;
+      }
+      toast(`Viaje «${t.title}» creado con esta visita.`);
+    } else if (sel.value) {
+      await api('trips', { method: 'PUT', query: { id: sel.value, visit: visitId }, body: { in: true } });
+      toast('Visita agregada al viaje.');
+    } else if (current) {
+      await api('trips', { method: 'PUT', query: { id: current, visit: visitId }, body: { in: false } });
+      toast('Visita sacada del viaje.');
+    }
+    await loadWishes(); // trae tambien los viajes
+    renderPanel();
+  } catch (ex) {
+    toast(ex.message, 'err');
+    sel.value = current ?? '';
+  }
+});
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('[data-trip-new]') || e.target.closest('.page')) return;
+  const t = await tripForm();
+  if (t) {
+    await loadWishes();
+    go(`viaje/${t.id}`);
   }
 });
 

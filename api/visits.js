@@ -38,6 +38,7 @@ const ownVisit = (v, withBody) => ({
     ? { photoCount: Number(v.photoCount), cover: v.coverCfId && imagesReady() ? signedUrl(v.coverCfId, 'ttcard') : null }
     : {}),
   publishedAt: v.publishedAt ?? null,
+  tripId: v.tripId == null ? null : Number(v.tripId),
   createdAt: v.createdAt,
   updatedAt: v.updatedAt,
 });

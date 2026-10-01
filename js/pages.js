@@ -5,8 +5,9 @@
 import * as maplibregl from '/vendor/maplibre/maplibre-gl.mjs';
 import { api } from './api.js';
 import * as account from './account.js';
-import { esc, toast, formatRange } from './ui.js';
+import { esc, toast, ask, modal, formatRange } from './ui.js';
 import { renderStory } from './story.js';
+import { placePoint } from './geo.js';
 import { kindOf, KINDS } from './pins.js';
 import { currentBasemap } from './basemap.js';
 import { canInstall, onInstallChange, install } from './install.js';
@@ -217,6 +218,158 @@ export async function renderHome({ go, countVisited, wishes }) {
   });
 }
 
+// ---------- Viaje (mio en #/viaje/3, publicado en #/t/3) ----------
+
+export async function renderTrip(id, { go, isPublic }) {
+  const el = openPage('article trip');
+  el.innerHTML = '<div class="article-loading"><div class="spinner"></div></div>';
+  let t;
+  try {
+    t = isPublic ? (await api('public', { query: { trip: id } })).trip : (await api('trips', { query: { id } })).trip;
+  } catch (e) {
+    el.innerHTML = `<div class="article-missing"><span>🧳</span><h2>${esc(e.status === 404 ? (isPublic ? 'Este viaje no existe o ya no está publicado' : 'Este viaje no existe o no es tuyo') : 'No se pudo abrir')}</h2><a class="primary" href="#/">Ir al inicio</a></div>`;
+    return;
+  }
+  if (page?.el !== el) return;
+  const visitHref = (v) => (isPublic ? `#/p/${v.id}` : `#/${v.placeId}/v/${v.id}`);
+  const meta = [formatRange(t.startDay, t.endDay), `${t.visitCount} ${t.visitCount === 1 ? 'visita' : 'visitas'}`, t.countryCount ? `${t.countryCount} ${t.countryCount === 1 ? 'país' : 'países'}` : null].filter(Boolean).join(' · ');
+  el.innerHTML = `
+    <header class="article-hero ${t.cover ? 'has-cover' : ''}">
+      ${t.cover ? `<img class="article-cover" src="${esc(t.cover)}" alt="">` : ''}
+      <div class="article-bar"><a class="glass-btn" href="${isPublic ? '#/' : '#/mundo'}" aria-label="Volver">←</a>${isPublic ? '<button class="glass-btn" data-share>Compartir</button>' : ''}</div>
+      <div class="article-title wrap-narrow">
+        <p class="eyebrow">🧳 Viaje</p>
+        <h1>${esc(t.title)}</h1>
+        <p class="article-meta">${isPublic ? `${authorLine(t.author)} · ` : ''}${esc(meta)}</p>
+      </div>
+    </header>
+    <div class="article-body wrap-narrow">
+      ${isPublic ? '' : `<div class="trip-owner">
+        <button class="secondary" data-trip-edit>✎ Renombrar</button>
+        ${t.publishedAt
+          ? `<span class="publish on"><span>🌎 <b>Publicado</b></span><a class="link" href="#/t/${t.id}">Ver página pública</a><button class="link" data-trip-publish="0">Dejar de publicar</button></span>`
+          : '<button class="secondary" data-trip-publish="1">🌎 Publicar viaje</button>'}
+        <button class="danger-link" data-trip-delete>Borrar viaje</button>
+      </div>`}
+      ${t.summary ? `<p class="trip-summary">${esc(t.summary)}</p>` : ''}
+      ${t.visits.length ? `<div class="mini-map trip-map" id="trip-map"></div>` : ''}
+      ${t.visits.length
+        ? `<ol class="timeline">${t.visits
+            .map((v, i) => `<li class="reveal" style="--i:${i % 6}"><span class="tl-n">${i + 1}</span>
+              <a class="tl-card" href="${visitHref(v)}">
+                ${v.cover ? `<img src="${esc(v.cover)}" alt="" loading="lazy">` : '<span class="tl-nocover">📍</span>'}
+                <span class="tl-body"><small>${esc(formatRange(v.startDay, v.endDay))}</small><b>${esc(v.title)}</b>
+                <span>${esc(placeShort(v.placeName))}${v.photoCount ? ` · 📷 ${v.photoCount}` : ''}${!isPublic && v.publishedAt ? ' · 🌎' : ''}</span></span>
+              </a></li>`)
+            .join('')}</ol>`
+        : `<div class="empty"><span>🧳</span><p>${isPublic ? 'Este viaje todavía no tiene visitas publicadas.' : 'Este viaje todavía no tiene visitas. En cada visita, elige este viaje en «🧳 Viaje».'}</p></div>`}
+      ${isPublic ? `<p class="article-foot note">Viaje publicado por @${esc(t.author)} en TravelTime. Solo se muestran las visitas que publicó.</p>` : ''}
+    </div>`;
+  const io = reveal(el);
+
+  // La ruta: un punto numerado por visita, unidos en orden.
+  let map = null;
+  if (t.visits.length) {
+    map = new maplibregl.Map({ container: 'trip-map', style: currentBasemap().url, attributionControl: { compact: true }, cooperativeGestures: true, dragRotate: false });
+    map.on('load', async () => {
+      const pts = await Promise.all(t.visits.map((v) => placePoint(v.placeId)));
+      if (!map) return;
+      const route = pts.filter(Boolean);
+      if (route.length > 1) {
+        map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: route }, properties: {} } });
+        map.addLayer({ id: 'route', type: 'line', source: 'route', paint: { 'line-color': '#f2545b', 'line-width': 3, 'line-dasharray': [1.5, 1.5], 'line-opacity': 0.85 } });
+      }
+      const b = new maplibregl.LngLatBounds();
+      pts.forEach((p, i) => {
+        if (!p) return;
+        const dot = document.createElement('a');
+        dot.className = 'route-dot';
+        dot.href = visitHref(t.visits[i]);
+        dot.textContent = String(i + 1);
+        dot.title = t.visits[i].title;
+        new maplibregl.Marker({ element: dot }).setLngLat(p).addTo(map);
+        b.extend(p);
+      });
+      if (!b.isEmpty()) map.fitBounds(b, { padding: 60, maxZoom: 9, duration: 0 });
+    });
+  }
+  page.cleanup = () => (io?.disconnect(), map?.remove(), (map = null));
+
+  el.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-share]')) {
+      try {
+        if (navigator.share) await navigator.share({ title: t.title, url: location.href });
+        else await navigator.clipboard.writeText(location.href), toast('Enlace copiado.');
+      } catch {}
+      return;
+    }
+    if (isPublic) return;
+    if (e.target.closest('[data-trip-edit]')) {
+      const saved = await tripForm(t);
+      if (saved) renderTrip(id, { go, isPublic });
+      return;
+    }
+    const pub = e.target.closest('[data-trip-publish]');
+    if (pub) {
+      const on = pub.dataset.tripPublish === '1';
+      if (on && !(await ask({ title: '¿Publicar este viaje?', text: 'Lo verá cualquiera, con su mapa y su línea de tiempo. Solo aparecen las visitas que ya publicaste: de las privadas no se muestra nada, ni sus fechas ni sus lugares. El nombre y el resumen del viaje sí se ven tal como los escribiste.', ok: 'Publicar' }))) return;
+      try {
+        await api('trips', { method: 'PUT', query: { id: t.id, publish: 1 }, body: { published: on } });
+        toast(on ? 'Viaje publicado.' : 'El viaje ya no está publicado.');
+        renderTrip(id, { go, isPublic });
+      } catch (ex) {
+        toast(ex.message, 'err');
+      }
+      return;
+    }
+    if (e.target.closest('[data-trip-delete]')) {
+      if (!(await ask({ title: `¿Borrar «${t.title}»?`, text: 'Se borra el viaje, no sus visitas: esas quedan como estaban, sueltas.', ok: 'Borrar viaje', danger: true }))) return;
+      try {
+        await api('trips', { method: 'DELETE', query: { id: t.id } });
+        toast('Viaje borrado.');
+        changed();
+        go(null);
+      } catch (ex) {
+        toast(ex.message, 'err');
+      }
+    }
+  });
+}
+
+// Nombre y resumen de un viaje. Sin trip: uno nuevo (con visitId, la mete de una vez).
+// Devuelve el viaje guardado o null.
+export function tripForm(trip = null, { visitId } = {}) {
+  return new Promise((resolve) => {
+    let saved = null;
+    const { root, close } = modal(
+      `<h2>${trip ? 'Editar viaje' : 'Nuevo viaje'}</h2>
+       <form data-trip-form>
+         <label class="field"><span>Nombre</span><input name="title" maxlength="120" required autofocus value="${esc(trip?.title ?? '')}" placeholder="Centroamérica, Semana Santa 2025"></label>
+         <label class="field"><span>De qué se trató (opcional)</span><textarea name="summary" rows="3" maxlength="2000" placeholder="Diez días en bus de Managua a San José…">${esc(trip?.summary ?? '')}</textarea></label>
+         <p class="form-error" hidden></p>
+         <div class="actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary">${trip ? 'Guardar' : 'Crear viaje'}</button></div>
+       </form>`,
+      { label: trip ? 'Editar viaje' : 'Nuevo viaje', onClose: () => resolve(saved) },
+    );
+    root.querySelector('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target));
+      const err = e.target.querySelector('.form-error');
+      err.hidden = true;
+      try {
+        saved = trip
+          ? (await api('trips', { method: 'PUT', query: { id: trip.id }, body: data })).trip
+          : (await api('trips', { method: 'POST', body: { ...data, visitId } })).trip;
+        changed();
+        close();
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+  });
+}
+
 // ---------- Visita publicada ----------
 
 export async function renderPublicVisit(id, { go, openViewer }) {
@@ -242,7 +395,7 @@ export async function renderPublicVisit(id, { go, openViewer }) {
       <div class="article-title wrap-narrow">
         <p class="eyebrow">📍 ${esc(v.placeName ?? '')}</p>
         <h1>${esc(v.title)}</h1>
-        <p class="article-meta">${authorLine(v.author)} · ${esc(formatRange(v.startDay, v.endDay))}</p>
+        <p class="article-meta">${authorLine(v.author)} · ${esc(formatRange(v.startDay, v.endDay))}${v.trip ? ` · 🧳 <a class="trip-link" href="#/t/${v.trip.id}">${esc(v.trip.title)}</a>` : ''}</p>
       </div>
     </header>
     <div class="article-body wrap-narrow">

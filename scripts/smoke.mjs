@@ -44,6 +44,7 @@ const handlers = {
   pins: (await import('../api/pins.js')).default,
   public: (await import('../api/public.js')).default,
   wishes: (await import('../api/wishes.js')).default,
+  trips: (await import('../api/trips.js')).default,
 };
 const { db } = await import('../api/_lib/db.js');
 const crypto = await import('node:crypto');
@@ -329,6 +330,48 @@ check('despublicada ya no sale', (await pub({ visit: V1 })).status === 404 && (a
 check('lo que la otra persona ya guardo se queda (es suyo)', (await call('wishes', 'GET', { token: B })).data.wishes.length === 2);
 check('borrar de la lista', (await call('wishes', 'DELETE', { token: B, query: { placeId: 'NIC.masaya.masaya' } })).status === 200 &&
   (await call('wishes', 'GET', { token: B })).data.wishes.length === 1);
+
+// ---------------------------------------------------------------- viajes
+const leon = (await call('visits', 'POST', { token: A, body: { placeId: 'NIC.leon.leon', placeName: 'León, León, Nicaragua', title: 'León', startDay: '2025-04-21', endDay: '2025-04-23' } })).data.visit;
+const sanJose = (await call('visits', 'POST', { token: A, body: { placeId: 'CRI.san-jose.san-jose', placeName: 'San José, San José, Costa Rica', title: 'San José (privada)', startDay: '2025-04-25' } })).data.visit;
+
+const trip = await call('trips', 'POST', { token: A, body: { title: 'Centroamérica 2025', visitId: V1 } });
+check('crear viaje con una visita adentro', trip.status === 201 && trip.data.trip.visitCount === 1, trip.data);
+const T = trip.data.trip.id;
+check('viaje sin nombre', (await call('trips', 'POST', { token: A, body: { title: ' ' } })).status === 400);
+check('no meto en mi viaje una visita ajena (404)', (await call('trips', 'POST', { token: B, body: { title: 'x', visitId: V1 } })).status === 404);
+check('meter otra visita', (await call('trips', 'PUT', { token: A, query: { id: T, visit: leon.id }, body: { in: true } })).data.trip?.visitCount === 2);
+await call('trips', 'PUT', { token: A, query: { id: T, visit: sanJose.id }, body: { in: true } });
+const td = await call('trips', 'GET', { token: A, query: { id: T } });
+check('el viaje trae sus visitas en orden', JSON.stringify(td.data.trip.visits.map((v) => v.title)) === JSON.stringify(['Semana Santa 2025', 'León', 'San José (privada)']), td.data.trip.visits.map((v) => v.title));
+check('las fechas salen de las visitas', td.data.trip.startDay === '2025-04-17' && td.data.trip.endDay === '2025-04-25', td.data.trip);
+check('cuenta los paises', td.data.trip.countryCount === 2);
+check('otra persona no ve mi viaje (404)', (await call('trips', 'GET', { token: B, query: { id: T } })).status === 404);
+check('otra persona no mete visitas en mi viaje (404)', (await call('trips', 'PUT', { token: B, query: { id: T, visit: V1 }, body: { in: true } })).status === 404);
+check('no meto una visita ajena en mi viaje (404)', (await call('trips', 'PUT', { token: A, query: { id: T, visit: ya.data.visit.id }, body: { in: true } })).status === 404);
+check('la visita sabe en que viaje esta', (await call('visits', 'GET', { token: A, query: { id: leon.id } })).data.visit.tripId === T);
+check('mis viajes', (await call('trips', 'GET', { token: A })).data.trips.length === 1 && (await call('trips', 'GET', { token: B })).data.trips.length === 0);
+check('renombrar', (await call('trips', 'PUT', { token: A, query: { id: T }, body: { title: 'Centroamérica, Semana Santa 2025' } })).data.trip?.title === 'Centroamérica, Semana Santa 2025');
+
+// Publicar el viaje: solo se ven las visitas publicadas, y nada de las privadas.
+check('sin publicar, el viaje publico es 404', (await pub({ trip: T })).status === 404);
+await call('trips', 'PUT', { token: A, query: { id: T, publish: 1 }, body: { published: true } });
+await call('visits', 'PUT', { token: A, query: { id: leon.id, publish: 1 }, body: { published: true } });
+const pt = await pub({ trip: T });
+check('viaje publicado: solo la visita publicada', pt.status === 200 && pt.data.trip.visits.length === 1 && pt.data.trip.visits[0].title === 'León', pt.data.trip?.visits?.map((v) => v.title));
+const ptJson = JSON.stringify(pt.data);
+check('no se filtra la visita privada: ni titulo, ni fecha, ni pais',
+  !/San José|2025-04-25|CRI|"title":"Semana Santa 2025"/.test(ptJson) && pt.data.trip.countryCount === 1 && pt.data.trip.startDay === '2025-04-21' && pt.data.trip.endDay === '2025-04-23', ptJson.match(/San José|2025-04-25|CRI|"title":"Semana Santa 2025"/)?.[0] ?? pt.data.trip);
+check('el viaje publico no trae ids de usuario', !/userId|email|fullName/.test(ptJson));
+check('la visita publicada sabe de su viaje publicado', (await pub({ visit: leon.id })).data.visit.trip?.id === T);
+await call('trips', 'PUT', { token: A, query: { id: T, publish: 1 }, body: { published: false } });
+check('si el viaje se despublica, la visita ya no lo nombra', (await pub({ visit: leon.id })).data.visit.trip === null);
+
+check('sacar una visita del viaje', (await call('trips', 'PUT', { token: A, query: { id: T, visit: sanJose.id }, body: { in: false } })).data.trip?.visitCount === 2);
+check('borrar el viaje', (await call('trips', 'DELETE', { token: A, query: { id: T } })).status === 200);
+check('las visitas quedan, sueltas', (await call('visits', 'GET', { token: A, query: { id: leon.id } })).data.visit?.tripId === null);
+await call('visits', 'DELETE', { token: A, query: { id: leon.id } });
+await call('visits', 'DELETE', { token: A, query: { id: sanJose.id } });
 
 check('borrar visita', (await call('visits', 'DELETE', { token: A, query: { id: V1 } })).status === 200);
 check('borrar la visita se lleva sus fotos de Cloudflare', cf.deleted.includes('cf-1') && cf.deleted.includes('cf-4'), cf.deleted);

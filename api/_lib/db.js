@@ -186,6 +186,28 @@ async function initSchema() {
       createdAt   TEXT NOT NULL
     )`);
   await db.execute('CREATE INDEX IF NOT EXISTS idx_wishes_user ON wishes (userId)');
+
+  // Viajes: agrupan visitas ("Centroamerica 2025": Granada, Leon, San Jose).
+  // Las fechas no se guardan: salen de las visitas (la primera y la ultima).
+  // Publicar el viaje no publica sus visitas: la pagina publica muestra solo
+  // las que ya estan publicadas una por una.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS trips (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title       TEXT NOT NULL,
+      summary     TEXT,
+      publishedAt TEXT,
+      createdAt   TEXT NOT NULL,
+      updatedAt   TEXT NOT NULL
+    )`);
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_trips_user ON trips (userId)');
+  try {
+    await db.execute('ALTER TABLE visits ADD COLUMN tripId INTEGER');
+  } catch {
+    /* ya existe */
+  }
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_visits_trip ON visits (tripId) WHERE tripId IS NOT NULL');
 }
 
 // Alfabeto sin caracteres que se confundan (nada de I, O, 0, 1).
