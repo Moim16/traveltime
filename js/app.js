@@ -11,7 +11,9 @@ import * as account from './account.js';
 import { api } from './api.js';
 import { uploadAll } from './photos.js';
 import { KINDS, kindOf, toGeoJSON, pinForm, pinCard } from './pins.js';
-import { esc, toast, ask, busy, formatRange, paragraphs } from './ui.js';
+import { esc, toast, ask, busy, formatRange } from './ui.js';
+import { renderStory } from './story.js';
+import { openWriter, closeWriter } from './editor.js';
 import { BASEMAPS, currentBasemap, setBasemap, tintBasemap } from './basemap.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -390,7 +392,19 @@ function parseRoute(hash) {
   return { place: place || null, visit, edit: visit === 'new' || action === 'editar' };
 }
 
+let editHash = null;
+
 async function show({ place: id, visit, edit }) {
+  // Salir del modo escritura navegando (atras del telefono, un enlace): con
+  // cambios sin guardar se pregunta, y si la persona se queda se vuelve al editor.
+  if (edit && typeof visit === 'number') editHash = location.hash;
+  else if (!closeWriter()) {
+    if (!(await ask({ title: '¿Salir sin guardar?', text: 'Perderás lo que escribiste desde la última vez que guardaste.', ok: 'Salir', danger: true }))) {
+      location.hash = editHash;
+      return;
+    }
+    closeWriter(true);
+  }
   const iso = id ? geo.isoOf(id) : null;
   if (iso && !countryName.has(iso)) return go(null);
   const parts = id ? id.split('.') : [];
@@ -581,7 +595,7 @@ async function renderVisitList() {
     '</ul>';
 }
 
-// Una visita abierta: verla, editarla o crearla.
+// Una visita abierta: verla, escribirla (modo escritura) o empezarla.
 async function renderVisit(panel) {
   const place = here();
   if (!account.current()) {
@@ -591,29 +605,81 @@ async function renderVisit(panel) {
   }
   const back = `<button class="link back" data-go="${esc(place)}">← ${esc(nameOf(place))}</button>`;
 
-  if (state.visit === 'new') return renderEditor(panel, back, null);
+  if (state.visit === 'new') return renderNewVisit(panel, back);
 
+  const visitId = state.visit;
   panel.innerHTML = back + '<p class="note">Cargando…</p>';
   let v;
+  let photos = [];
+  let pins = [];
   try {
-    v = (await api('visits', { query: { id: state.visit } })).visit;
+    // Las fotos y los lugares hacen falta para mostrar los bloques del relato
+    // que los mencionan. Sin fotos configuradas, el relato se muestra igual.
+    [v, photos, pins] = await Promise.all([
+      api('visits', { query: { id: visitId } }).then((r) => r.visit),
+      api('photos', { query: { visit: visitId } }).then((r) => r.photos).catch(() => []),
+      api('pins', { query: { visit: visitId } }).then((r) => r.pins).catch(() => []),
+    ]);
   } catch (e) {
     panel.innerHTML = back + `<p class="note">${esc(e.status === 404 ? 'Esta visita no existe o no es tuya.' : e.message)}</p>`;
     return;
   }
-  if (state.edit) return renderEditor(panel, back, v);
+  if (state.visit !== visitId) return; // ya se fue a otra
+  gallery = { visitId, photos };
 
+  const story = renderStory(v.body, { photos: new Map(photos.map((p) => [p.id, p])), pins: new Map(pins.map((p) => [p.id, p])) });
   panel.innerHTML =
     back +
     kindLine(formatRange(v.startDay, v.endDay)) +
     `<h1>${esc(v.title)}</h1>` +
-    `<article class="story">${v.body ? paragraphs(v.body) : '<p class="note">Sin relato todavía.</p>'}</article>` +
+    `<article class="story">${story || `<p class="note">Sin relato todavía. <button class="link" data-go="${esc(place)}/v/${v.id}/editar">Escribirlo</button></p>`}</article>` +
+    `<div class="actions start"><button class="primary" data-go="${esc(place)}/v/${v.id}/editar">✎ Escribir</button>` +
+    `<button class="danger-link" data-delete="${v.id}">Borrar</button></div>` +
     `<section class="gallery" id="gallery" aria-label="Fotos"></section>` +
-    `<section class="pins" id="pins" aria-label="Lugares"></section>` +
-    `<div class="actions start"><button class="secondary" data-go="${esc(place)}/v/${v.id}/editar">Editar</button>` +
-    `<button class="danger-link" data-delete="${v.id}">Borrar</button></div>`;
-  renderGallery(v.id);
+    `<section class="pins" id="pins" aria-label="Lugares"></section>`;
+  paintGallery($('#gallery'));
   renderPinList(); // si los pines llegaron antes que la visita
+
+  if (state.edit) {
+    openWriter({
+      visit: v,
+      placeLabel: placeName(),
+      photos: () => gallery.photos,
+      pins: () => pinsData.filter((p) => p.visitId === visitId),
+      refreshPins: loadPins,
+      upload: async (file) => {
+        const { done, errors } = await uploadAll(visitId, [file], () => {});
+        if (!done.length) throw new Error(errors[0] ?? 'No se pudo subir la foto.');
+        gallery.photos.push(done[0]);
+        return done[0];
+      },
+      save: async (data) => {
+        const saved = (await api('visits', { method: 'PUT', query: { id: visitId }, body: data })).visit;
+        return saved;
+      },
+      onClose: () => go(`${place}/v/${visitId}`),
+    });
+  }
+}
+
+// Empezar una visita: titulo y fechas. Despues se abre el modo escritura, donde
+// ya se pueden subir fotos y marcar lugares (necesitan que la visita exista).
+function renderNewVisit(panel, back) {
+  const today = new Date().toISOString().slice(0, 10);
+  panel.innerHTML =
+    back +
+    kindLine(`Nueva visita · ${nameOf(here())}`) +
+    `<form class="editor" data-new-visit>
+      <label class="field"><span>Título</span><input name="title" maxlength="120" required placeholder="Semana Santa en las isletas" autofocus></label>
+      <div class="field-row">
+        <label class="field"><span>Desde</span><input name="startDay" type="date" max="${today}"></label>
+        <label class="field"><span>Hasta</span><input name="endDay" type="date" max="${today}"></label>
+      </div>
+      <p class="form-error" hidden></p>
+      <div class="actions start"><button class="primary">Empezar a escribir →</button>
+      <button type="button" class="secondary" data-go="${esc(here())}">Cancelar</button></div>
+    </form>`;
+  panel.querySelector('[autofocus]')?.focus();
 }
 
 // ---------- Galeria ----------
@@ -764,42 +830,20 @@ function openPhoto(index) {
   back.querySelector('.lb-close').focus();
 }
 
-function renderEditor(panel, back, v) {
-  const today = new Date().toISOString().slice(0, 10);
-  panel.innerHTML =
-    back +
-    kindLine(v ? 'Editar visita' : `Nueva visita · ${nameOf(here())}`) +
-    `<form class="editor" data-visit-form="${v?.id ?? ''}">
-      <label class="field"><span>Título</span><input name="title" maxlength="120" required value="${esc(v?.title ?? '')}" placeholder="Semana Santa en las isletas" autofocus></label>
-      <div class="field-row">
-        <label class="field"><span>Desde</span><input name="startDay" type="date" max="${today}" value="${esc(v?.startDay ?? '')}"></label>
-        <label class="field"><span>Hasta</span><input name="endDay" type="date" max="${today}" value="${esc(v?.endDay ?? '')}"></label>
-      </div>
-      <label class="field"><span>Lo que hiciste</span><textarea name="body" rows="9" maxlength="20000" placeholder="Llegamos el jueves temprano…">${esc(v?.body ?? '')}</textarea></label>
-      <p class="form-error" hidden></p>
-      <div class="actions start"><button class="primary">${v ? 'Guardar' : 'Crear visita'}</button>
-      <button type="button" class="secondary" data-go="${esc(v ? `${v.placeId}/v/${v.id}` : here())}">Cancelar</button></div>
-    </form>`;
-  panel.querySelector('[autofocus]')?.focus();
-}
 
 document.addEventListener('submit', async (e) => {
-  const form = e.target.closest('[data-visit-form]');
+  const form = e.target.closest('[data-new-visit]');
   if (!form) return;
   e.preventDefault();
-  const id = form.dataset.visitForm;
-  const data = Object.fromEntries(new FormData(form));
   const err = form.querySelector('.form-error');
   err.hidden = true;
   await busy(form.querySelector('button.primary'), async () => {
     try {
-      const r = id
-        ? await api('visits', { method: 'PUT', query: { id }, body: data })
-        : await api('visits', { method: 'POST', body: { ...data, placeId: here(), placeName: placeName() } });
+      const data = Object.fromEntries(new FormData(form));
+      const r = await api('visits', { method: 'POST', body: { ...data, placeId: here(), placeName: placeName() } });
       await visits.refresh();
       applyStates();
-      toast(id ? 'Visita guardada.' : 'Visita creada.');
-      go(`${r.visit.placeId}/v/${r.visit.id}`);
+      go(`${r.visit.placeId}/v/${r.visit.id}/editar`);
     } catch (ex) {
       err.textContent = ex.message;
       err.hidden = false;
@@ -812,6 +856,13 @@ document.addEventListener('click', async (e) => {
   if (nav && !nav.hasAttribute('aria-current')) return go(nav.dataset.go || null);
   const photo = e.target.closest('[data-photo]');
   if (photo) return openPhoto(Number(photo.dataset.photo));
+  // Una foto dentro del relato abre la misma vista en grande, en su lugar de la galeria.
+  const storyPhoto = e.target.closest('[data-story-photo]');
+  if (storyPhoto) {
+    const i = gallery.photos.findIndex((p) => p.id === Number(storyPhoto.dataset.storyPhoto));
+    if (i >= 0) openPhoto(i);
+    return;
+  }
   const auth = e.target.closest('[data-auth]');
   if (auth) return account.openAuth(auth.dataset.auth);
   const login = e.target.closest('[data-login]');

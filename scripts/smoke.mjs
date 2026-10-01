@@ -109,7 +109,46 @@ const v1 = await call('visits', 'POST', {
 });
 check('crear visita', v1.status === 201 && v1.data.visit.id, v1);
 const V1 = v1.data.visit.id;
-check('el texto conserva los parrafos y junta los saltos de mas', v1.data.visit.body === 'Las isletas.\n\nY el volcán.', v1.data.visit.body);
+check('un relato en texto (fase 1) se lee como parrafos',
+  JSON.stringify(v1.data.visit.body?.blocks?.map((b) => b.data.text)) === JSON.stringify(['Las isletas.', 'Y el volcán.']), v1.data.visit.body);
+
+// ---------------------------------------------------------------- relato por bloques
+const { sanitizeInline, parseStory, excerpt } = await import('../api/_lib/story.js');
+check('se quita una imagen con onerror', sanitizeInline('hola <img src=x onerror=alert(1)>mundo') === 'hola mundo', sanitizeInline('hola <img src=x onerror=alert(1)>mundo'));
+check('se quita un script (queda solo el texto)', !/<script/i.test(sanitizeInline('<script>alert(1)</script>ok')));
+check('un enlace javascript: pierde el enlace', sanitizeInline('<a href="javascript:alert(1)">clic</a>') === 'clic', sanitizeInline('<a href="javascript:alert(1)">clic</a>'));
+check('un enlace https queda, sin atributos de mas',
+  sanitizeInline('<a href="https://x.com/a?b=1&amp;c=2" onclick="robar()" style="x">sitio</a>') === '<a href="https://x.com/a?b=1&amp;c=2">sitio</a>',
+  sanitizeInline('<a href="https://x.com/a?b=1&amp;c=2" onclick="robar()" style="x">sitio</a>'));
+check('una comilla en el href no rompe el atributo', !/"[^"]*"[^>]*onerror/.test(sanitizeInline(`<a href='https://x.com/"onerror="alert(1)'>x</a>`)), sanitizeInline(`<a href='https://x.com/"onerror="alert(1)'>x</a>`));
+check('negrita y cursiva quedan; strong pasa a b', sanitizeInline('<strong>a</strong> <i>b</i> <mark class="cdx-marker">c</mark>') === '<b>a</b> <i>b</i> <mark>c</mark>');
+check('una etiqueta sin cerrar se cierra', sanitizeInline('<b>sin cerrar') === '<b>sin cerrar</b>');
+check('un < suelto se escapa', sanitizeInline('3 < 5 y 7 > 2') === '3 &lt; 5 y 7 &gt; 2');
+
+const doc = parseStory({
+  blocks: [
+    { type: 'header', data: { text: 'Día 1', level: 2 } },
+    { type: 'paragraph', data: { text: 'Llegamos <b>temprano</b>.' } },
+    { type: 'paragraph', data: { text: '' } },
+    { type: 'iframe', data: { src: 'https://malo.com' } },
+    { type: 'list', data: { style: 'checklist', items: [{ content: 'Bloqueador', meta: { checked: true }, items: [] }] } },
+    { type: 'callout', data: { emoji: '💡', text: 'Llevar efectivo' } },
+    { type: 'photo', data: { photoId: 7, caption: 'La <script>x</script>catedral' } },
+    { type: 'photo', data: { photoId: 'abc' } },
+    { type: 'place', data: { pinId: 3 } },
+  ],
+});
+const blocks = JSON.parse(doc.value).blocks;
+check('bloques: se descartan los desconocidos, los vacios y los ids malos',
+  JSON.stringify(blocks.map((b) => b.type)) === JSON.stringify(['header', 'paragraph', 'list', 'callout', 'photo', 'place']), blocks.map((b) => b.type));
+check('la lista de tareas conserva lo marcado', blocks[2].data.style === 'checklist' && blocks[2].data.items[0].meta.checked === true);
+check('el pie de foto tambien se limpia', !/<script/.test(blocks[4].data.caption));
+check('un relato vacio se guarda como nada', parseStory({ blocks: [{ type: 'paragraph', data: { text: '' } }] }).value === null);
+check('un formato roto se rechaza', parseStory({ hola: 1 }).ok === false);
+check('el resumen sale en texto plano', excerpt(JSON.parse(doc.value)) === 'Llegamos temprano. Llevar efectivo', excerpt(JSON.parse(doc.value)));
+
+const vb = await call('visits', 'PUT', { token: A, query: { id: V1 }, body: { title: 'Semana Santa 2025', startDay: '2025-04-17', body: { blocks: [{ type: 'paragraph', data: { text: 'Hola <img src=x onerror=alert(1)>' } }] } } });
+check('el endpoint guarda bloques ya limpios', vb.data.visit?.body?.blocks?.[0]?.data?.text === 'Hola', vb.data.visit?.body);
 check('una visita marca el lugar como visitado', (await call('marks', 'GET', { token: A })).data.marks.includes('NIC.granada.granada'));
 
 await call('visits', 'POST', { token: A, body: { placeId: 'NIC.masaya.masaya', title: 'Volcán Masaya', startDay: '2026-01-05' } });

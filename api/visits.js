@@ -14,10 +14,11 @@
 // que una que no existe. Compartir llega en la fase 3.
 
 import { db, ensureSchema, nowIso } from './_lib/db.js';
-import { readJson, clean, cleanText, parseDay, parseId, parsePlace } from './_lib/http.js';
+import { readJson, clean, parseDay, parseId, parsePlace } from './_lib/http.js';
 import { currentUser, deny, notYours } from './_lib/auth.js';
 import { imagesReady, signedUrl } from './_lib/images.js';
 import { removePhotos } from './_lib/photos.js';
+import { parseStory, readStory } from './_lib/story.js';
 
 const TITLE_MAX = 120;
 
@@ -28,7 +29,8 @@ const publicVisit = (v, withBody) => ({
   title: v.title,
   startDay: v.startDay ?? null,
   endDay: v.endDay ?? null,
-  ...(withBody ? { body: v.body ?? null } : {}),
+  // body: { v, blocks } (ver api/_lib/story.js). Un relato de la fase 1, en texto, sale ya convertido.
+  ...(withBody ? { body: readStory(v.body) } : {}),
   ...('photoCount' in v
     ? { photoCount: Number(v.photoCount), cover: v.coverCfId && imagesReady() ? signedUrl(v.coverCfId, 'ttcard') : null }
     : {}),
@@ -46,7 +48,9 @@ function parseFields(body) {
   if (body.endDay && !endDay) return { ok: false, error: 'La fecha de fin no es válida.' };
   if (endDay && !startDay) return { ok: false, error: 'Si pones fecha de fin, pon también la de inicio.' };
   if (startDay && endDay && endDay < startDay) return { ok: false, error: 'La visita no puede terminar antes de empezar.' };
-  return { ok: true, value: { title, startDay, endDay, body: cleanText(body.body) } };
+  const story = parseStory(body.body);
+  if (!story.ok) return { ok: false, error: story.error };
+  return { ok: true, value: { title, startDay, endDay, body: story.value } };
 }
 
 async function mine(userId, id) {
