@@ -315,14 +315,15 @@ async function pool(items, n, fn) {
 await mkdir(CACHE, { recursive: true });
 await mkdir(GEO, { recursive: true });
 
-// Solo los lagos grandes (> 50 km2: los que se notan a esta escala) y ya
-// aligerados: con la orilla completa, cada departamento sumaba miles de puntos
-// (Nicaragua pasaba de 125 KB a 500 KB).
-lakesFile = join(CACHE, 'lakes-simple.json');
+// Solo los lagos grandes (> 50 km2: los que se notan a esta escala), con la
+// orilla aligerada por distancia (120 m) y no por porcentaje: al 8 % la orilla
+// del Cocibolca quedaba en tramos rectos que cortaban tierra firme, y la ciudad
+// de Granada quedaba fuera de su propio municipio.
+lakesFile = join(CACHE, 'lakes-simple-120m.json');
 if (!existsSync(lakesFile)) {
   await run(
     `-i "${await download(LAKES_URL, 'lakes-10m.geojson')}" -filter "this.area > 50e6" -filter-fields name ` +
-      `-simplify 8% keep-shapes -o "${lakesFile}" format=geojson precision=0.0001`,
+      `-simplify interval=120 keep-shapes -o "${lakesFile}" format=geojson precision=0.0001`,
   );
 }
 

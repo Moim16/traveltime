@@ -180,6 +180,13 @@ a.primary, a.secondary { text-decoration: none; display: inline-block; }
 .publish.on { padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, #10b981 12%, transparent); border: 1px solid color-mix(in srgb, #10b981 35%, transparent); }
 .actions.tight { margin-top: 0; }
 .pin-list.recs li { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 12px; }
+/* En el panel, ".pin-list button" (ancho completo, sin borde) le ganaba a .chip-btn */
+.pin-list.recs .place-chip-actions { padding-left: 42px; }
+.pin-list.recs .chip-btn {
+  width: auto; display: inline-block; padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card-solid); font-size: 12.5px;
+}
+.pin-list.recs .chip-btn.done { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rec-row { display: flex; gap: 10px; align-items: center; color: inherit; text-decoration: none; }
 .lb-caption-ro { flex: 1 1 100%; margin: 0; color: #fff; font-size: 15px; }
 
