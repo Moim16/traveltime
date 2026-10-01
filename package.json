@@ -1,0 +1,24 @@
+{
+  "name": "traveltime",
+  "version": "1.0.0",
+  "scripts": {
+    "geo": "node scripts/build-geo.mjs",
+    "vendor": "node scripts/vendor.mjs",
+    "geo:upload": "node --env-file=.env scripts/upload-geo.mjs",
+    "dev": "node --env-file=.env scripts/dev.mjs",
+    "test": "node scripts/smoke.mjs",
+    "cf:setup": "node --env-file=.env scripts/cf-setup.mjs"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "Los lugares que has visitado en el mundo, con lo que hiciste en cada uno (Vercel + Turso + Cloudflare Images)",
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1144.0",
+    "maplibre-gl": "^6.11.2",
+    "mapshaper": "^0.7.72"
+  },
+  "type": "module",
+  "dependencies": {
+    "@libsql/client": "^0.18.0"
+  }
+}

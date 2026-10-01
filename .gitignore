@@ -1,0 +1,10 @@
+node_modules/
+.geo-cache/
+.env
+.env.local
+.vercel/
+data/*.db
+
+# Los mapas se generan (npm run geo) y viven en S3 (npm run geo:upload)
+geo/
+
