@@ -10,10 +10,25 @@ import { GEO_BASE, GEO_REMOTE } from './config.js';
 // archivo viejo que el navegador tenia guardado.
 //   - En S3 la version es una carpeta: <base>/<v>/NIC/adm1.json, con cache de un año.
 //   - En local va en la query: /geo/NIC/adm1.json?v=<v>.
+// Sin señal se usa la ultima version conocida: es la que el service worker
+// tiene guardada (sw.js), y con ella el mapa ya visto se puede abrir offline.
+const VKEY = 'tt.geoVersion';
+const lastVersion = () => {
+  try {
+    return localStorage.getItem(VKEY) || '0';
+  } catch {
+    return '0';
+  }
+};
 const version = fetch(`${GEO_BASE}/version.json`, { cache: 'no-cache' })
-  .then((r) => (r.ok ? r.json() : { v: '0' }))
-  .then((j) => j.v)
-  .catch(() => '0');
+  .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+  .then((j) => {
+    try {
+      localStorage.setItem(VKEY, j.v);
+    } catch {}
+    return j.v;
+  })
+  .catch(lastVersion);
 
 const urlOf = (path, v) => (GEO_REMOTE ? `${GEO_BASE}/${v}/${path}` : `${GEO_BASE}/${path}?v=${v}`);
 

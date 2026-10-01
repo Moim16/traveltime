@@ -9,6 +9,7 @@ import { esc, toast, formatRange } from './ui.js';
 import { renderStory } from './story.js';
 import { kindOf, KINDS } from './pins.js';
 import { currentBasemap } from './basemap.js';
+import { canInstall, onInstallChange, install } from './install.js';
 
 let page = null;
 
@@ -119,6 +120,7 @@ export async function renderHome({ go, countVisited, wishes }) {
         <div class="hero-cta reveal" style="--i:3">
           <a class="primary big" href="#/mundo">${me ? 'Abrir mi mapa' : 'Explorar el mapa'} →</a>
           ${me ? '' : '<button class="secondary big" data-auth="signup">Crear cuenta</button>'}
+          <button class="secondary big install-btn" data-install hidden>📲 Instalar app</button>
         </div>
         <p class="hero-stats reveal" style="--i:4" id="home-stats"></p>
       </div>
@@ -162,7 +164,14 @@ export async function renderHome({ go, countVisited, wishes }) {
 
     <footer class="foot"><div class="wrap"><span>✈ TravelTime</span><span>Mapas © OpenStreetMap · geoBoundaries · Natural Earth</span></div></footer>`;
   const io = reveal(el);
-  page.cleanup = () => io?.disconnect();
+
+  // El boton de instalar aparece cuando el navegador lo permite (o en iPhone, con instrucciones).
+  const installBtn = el.querySelector('[data-install]');
+  const syncInstall = () => (installBtn.hidden = !canInstall());
+  syncInstall();
+  const offInstall = onInstallChange(syncInstall);
+  installBtn.addEventListener('click', install);
+  page.cleanup = () => (io?.disconnect(), offInstall());
 
   el.querySelector('.scroll-hint').addEventListener('click', (e) => {
     e.preventDefault();

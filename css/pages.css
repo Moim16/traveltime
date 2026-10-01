@@ -183,6 +183,9 @@ a.primary, a.secondary { text-decoration: none; display: inline-block; }
 .rec-row { display: flex; gap: 10px; align-items: center; color: inherit; text-decoration: none; }
 .lb-caption-ro { flex: 1 1 100%; margin: 0; color: #fff; font-size: 15px; }
 
+.install-btn[hidden] { display: none; }
+.steps-ios { margin: 6px 0 4px; padding-left: 22px; line-height: 1.7; }
+
 /* Sugerencia de fechas desde las fotos */
 .suggest {
   margin: -6px 0 14px; padding: 10px 12px; border-radius: 12px; font-size: 13.5px; line-height: 1.45;

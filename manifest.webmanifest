@@ -1,0 +1,23 @@
+{
+  "id": "/",
+  "name": "TravelTime",
+  "short_name": "TravelTime",
+  "description": "Los lugares que has visitado en el mundo, con lo que hiciste en cada uno.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#eef2f5",
+  "theme_color": "#f2545b",
+  "lang": "es",
+  "dir": "ltr",
+  "categories": ["travel", "lifestyle", "photo"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Mi mapa", "url": "/#/mundo", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
