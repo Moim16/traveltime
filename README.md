@@ -23,6 +23,8 @@ Sin cuenta se puede recorrer el mapa. Para marcar lugares y escribir visitas hay
 
 | `api/photos.js` | Fotos de una visita: pedir la subida, confirmarla, pie de foto y borrar |
 
+El código compartido del servidor va en **`api/_lib/`**, no en un `lib/` en la raíz. Vercel publica como archivo estático todo lo que está en la raíz, así que `/lib/auth.js` se podía descargar (pasó en el primer despliegue). La carpeta `api/` no se publica, y lo que empieza con `_` no se convierte en función.
+
 ```bash
 npm test     # 72 pruebas contra los handlers reales, en una base descartable y con Cloudflare simulado
 ```

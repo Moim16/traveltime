@@ -21,12 +21,12 @@
 // guarda hasheado. Es de un solo uso y al usarlo se entrega otro. Sirve aunque
 // no haya correo configurado.
 
-import { db, ensureSchema, nowIso, newRecoveryCode, normalizeRecovery } from '../lib/db.js';
-import { readJson, clean } from '../lib/http.js';
-import { mailReady, validEmail, cleanEmail, sendCode, newCode } from '../lib/mail.js';
+import { db, ensureSchema, nowIso, newRecoveryCode, normalizeRecovery } from './_lib/db.js';
+import { readJson, clean } from './_lib/http.js';
+import { mailReady, validEmail, cleanEmail, sendCode, newCode } from './_lib/mail.js';
 import {
   hashPassword, verifyPassword, openSession, closeSession, closeOtherSessions, currentUser, deny,
-} from '../lib/auth.js';
+} from './_lib/auth.js';
 
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;

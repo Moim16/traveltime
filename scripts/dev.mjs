@@ -52,7 +52,7 @@ createServer(async (req, res) => {
       res.end(JSON.stringify(data));
       return res;
     };
-    // Los handlers se importan una vez: si tocas api/ o lib/, reinicia el servidor.
+    // Los handlers se importan una vez: si tocas api/ (o api/_lib/), reinicia el servidor.
     const { default: handler } = await import(pathToFileURL(file).href);
     await handler(req, res);
     console.log(`${req.method} ${path}${url.search} -> ${res.statusCode}`);

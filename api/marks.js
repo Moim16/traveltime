@@ -7,9 +7,9 @@
 // Desmarcar un lugar que tiene visitas no lo borra del mapa: las visitas siguen
 // ahi. Para que deje de contar hay que borrar las visitas.
 
-import { db, ensureSchema, nowIso } from '../lib/db.js';
-import { readJson, parsePlace } from '../lib/http.js';
-import { currentUser, deny } from '../lib/auth.js';
+import { db, ensureSchema, nowIso } from './_lib/db.js';
+import { readJson, parsePlace } from './_lib/http.js';
+import { currentUser, deny } from './_lib/auth.js';
 
 export async function marksOf(userId) {
   const rs = await db.execute({

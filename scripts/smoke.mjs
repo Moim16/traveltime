@@ -42,7 +42,7 @@ const handlers = {
   visits: (await import('../api/visits.js')).default,
   photos: (await import('../api/photos.js')).default,
 };
-const { db } = await import('../lib/db.js');
+const { db } = await import('../api/_lib/db.js');
 const crypto = await import('node:crypto');
 
 async function call(name, method, { query = {}, body, token } = {}) {

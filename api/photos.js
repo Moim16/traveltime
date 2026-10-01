@@ -12,11 +12,11 @@
 // Cupos (FOTOS_POR_USUARIO, FOTOS_POR_VISITA): las 100.000 imagenes de la cuenta
 // de Cloudflare son de todos los usuarios; sin tope, uno solo las acaba.
 
-import { db, ensureSchema, nowIso } from '../lib/db.js';
-import { readJson, clean, parseId } from '../lib/http.js';
-import { currentUser, deny, notYours } from '../lib/auth.js';
-import { imagesReady, directUpload, isUploaded, signedUrl } from '../lib/images.js';
-import { removePhotos } from '../lib/photos.js';
+import { db, ensureSchema, nowIso } from './_lib/db.js';
+import { readJson, clean, parseId } from './_lib/http.js';
+import { currentUser, deny, notYours } from './_lib/auth.js';
+import { imagesReady, directUpload, isUploaded, signedUrl } from './_lib/images.js';
+import { removePhotos } from './_lib/photos.js';
 
 const FOTOS_POR_USUARIO = 2000;
 const FOTOS_POR_VISITA = 150;

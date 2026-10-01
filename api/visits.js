@@ -13,11 +13,11 @@
 // Todo es de quien lo escribio: una visita de otra persona responde 404, igual
 // que una que no existe. Compartir llega en la fase 3.
 
-import { db, ensureSchema, nowIso } from '../lib/db.js';
-import { readJson, clean, cleanText, parseDay, parseId, parsePlace } from '../lib/http.js';
-import { currentUser, deny, notYours } from '../lib/auth.js';
-import { imagesReady, signedUrl } from '../lib/images.js';
-import { removePhotos } from '../lib/photos.js';
+import { db, ensureSchema, nowIso } from './_lib/db.js';
+import { readJson, clean, cleanText, parseDay, parseId, parsePlace } from './_lib/http.js';
+import { currentUser, deny, notYours } from './_lib/auth.js';
+import { imagesReady, signedUrl } from './_lib/images.js';
+import { removePhotos } from './_lib/photos.js';
 
 const TITLE_MAX = 120;
 
