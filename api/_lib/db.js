@@ -57,7 +57,13 @@ async function initSchema() {
   // se registro con un correo ajeno se quedaria con la cuenta de su dueño.
   // avatar: lo que se muestra en vez de la inicial (ver api/_lib/avatar.js).
   // googlePicture: la foto de la cuenta de Google, para poder elegirla.
-  for (const col of ['googleSub TEXT', 'emailVerified INTEGER NOT NULL DEFAULT 0', 'avatar TEXT', 'googlePicture TEXT']) {
+  // bio, livesIn, languages, interests, dream: el "Sobre mi" del perfil
+  // (api/_lib/profile.js); se ven en el perfil publico.
+  const userCols = [
+    'googleSub TEXT', 'emailVerified INTEGER NOT NULL DEFAULT 0', 'avatar TEXT', 'googlePicture TEXT',
+    'bio TEXT', 'livesIn TEXT', 'languages TEXT', 'interests TEXT', 'dream TEXT',
+  ];
+  for (const col of userCols) {
     try {
       await db.execute(`ALTER TABLE users ADD COLUMN ${col}`);
     } catch {

@@ -1,0 +1,110 @@
+/* El perfil (pagina #/perfil y #/u/usuario) y su editor, y los avatares. */
+
+/* ---------- Avatares ---------- */
+.avatar-sm, .avatar-xl, .av-fill { overflow: hidden; flex: none; }
+.av-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.av-emoji { background: var(--av, var(--accent)) !important; }
+.avatar-sm.av-emoji { font-size: 13px; }
+.avatar-xl {
+  width: 112px; height: 112px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 46px; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.avatar-xl.av-emoji { font-size: 56px; }
+/* El boton de la cuenta, arriba a la derecha */
+.av-fill { width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center; }
+.av-fill.av-emoji { font-size: 22px; }
+
+/* ---------- Pagina ---------- */
+.profile-page { background: var(--bg); }
+.pf-top {
+  position: sticky; top: 0; z-index: 3; display: flex; justify-content: space-between; padding: max(14px, env(safe-area-inset-top)) 16px 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 90%, #000), color-mix(in srgb, var(--accent) 0%, transparent));
+}
+.pf-wrap {
+  max-width: 1080px; margin: 0 auto; padding: 8px 20px 70px;
+  display: grid; grid-template-columns: 340px 1fr; gap: 48px; align-items: start;
+}
+@media (max-width: 860px) { .pf-wrap { grid-template-columns: 1fr; gap: 28px; } }
+.pf-card {
+  position: sticky; top: 76px; text-align: center; padding: 30px 24px 24px; border-radius: 28px;
+  background: var(--card-solid); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+@media (max-width: 860px) { .pf-card { position: static; } }
+.pf-av { position: relative; width: 112px; margin: 0 auto 14px; }
+.pf-verified {
+  position: absolute; right: -2px; bottom: 4px; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  background: #10b981; color: #fff; font-weight: 900; border: 3px solid var(--card-solid);
+}
+.pf-card h1 { font-size: 28px; letter-spacing: -0.02em; margin: 0; }
+.pf-handle { color: var(--muted); margin: 4px 0 18px; font-size: 14px; }
+.pf-stats { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
+.pf-stats > div { padding: 14px 4px; border-bottom: 1px solid var(--line); }
+.pf-stats > div:not(:nth-child(3n)) { border-right: 1px solid var(--line); }
+.pf-stats b { display: block; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pf-stats span { font-size: 12px; color: var(--muted); }
+.pf-badge { margin: 16px 0 6px; font-size: 13.5px; font-weight: 650; }
+.pf-private { font-size: 12.5px; margin: 10px 0 12px; }
+.pf-main h2 { font-size: clamp(26px, 4vw, 34px); letter-spacing: -0.03em; margin: 0 0 18px; }
+.pf-sep { margin-top: 44px; }
+.pf-bio { font-size: 17px; line-height: 1.7; margin-bottom: 22px; white-space: normal; }
+.pf-facts { list-style: none; margin: 0 0 24px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.pf-facts li { display: flex; gap: 12px; align-items: center; padding: 14px; border-radius: 18px; background: var(--card-solid); border: 1px solid var(--line); }
+.pf-ico { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; font-size: 20px; flex: none; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pf-facts small { display: block; font-size: 12px; color: var(--muted); }
+.pf-facts b { font-size: 15px; }
+.pf-h { font-size: 15px; margin: 6px 0 10px; }
+.pf-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.pf-chip {
+  padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; border: 1px solid var(--line);
+  background: var(--card-solid); color: var(--ink);
+}
+.pf-chips.pick .pf-chip { cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease; }
+.pf-chips.pick .pf-chip:active { transform: scale(0.96); }
+.pf-chips.pick .pf-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: var(--accent); color: var(--accent); }
+.author-link { color: inherit; text-decoration: none; }
+
+/* ---------- Editor (ventana) ---------- */
+.modal:has(.profile) { width: min(560px, 100%); }
+.profile-head { display: flex; gap: 16px; align-items: center; margin-bottom: 14px; }
+.profile-head .avatar-xl { width: 76px; height: 76px; font-size: 32px; }
+.profile-head .avatar-xl.av-emoji { font-size: 38px; }
+.profile-head h2 { margin: 0 0 2px; }
+.profile-label { margin: 18px 0 8px; font-weight: 800; font-size: 14px; }
+.profile-label small { font-weight: 550; color: var(--muted); }
+.profile-sub { margin: 4px 0 8px; font-size: 13px; color: var(--muted); font-weight: 550; }
+.profile .field textarea { min-height: 84px; }
+.av-modes { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.av-modes button, .av-upload {
+  padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card-solid); color: var(--ink);
+  font-weight: 650; font-size: 13.5px; cursor: pointer;
+}
+.av-modes .on, .av-upload.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.av-upload.busy { opacity: 0.6; pointer-events: none; }
+.av-emojis { display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px; margin-bottom: 10px; }
+.av-emojis button { aspect-ratio: 1; border-radius: 12px; border: 1px solid var(--line); background: var(--card-solid); font-size: 20px; cursor: pointer; padding: 0; }
+.av-emojis .on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+@media (max-width: 480px) { .av-emojis { grid-template-columns: repeat(5, 1fr); } }
+.av-colors { display: flex; gap: 8px; flex-wrap: wrap; transition: opacity 0.2s ease; }
+.av-colors.dim { opacity: 0.45; }
+.av-colors button { width: 30px; height: 30px; border-radius: 50%; background: var(--av); border: 3px solid var(--card-solid); box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
+.av-colors .on { box-shadow: 0 0 0 2px var(--ink); }
+.theme-pick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.theme-pick button {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--card-solid); color: var(--ink); font-weight: 650; font-size: 12.5px; cursor: pointer;
+}
+.theme-pick span { font-size: 20px; }
+.theme-pick .on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.profile .actions { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+.profile .actions .grow { flex: 1; }
+.danger-link { background: none; border: 0; color: #dc2626; font-weight: 650; cursor: pointer; padding: 8px 0; }
+
+/* ---------- Ventana de entrar ---------- */
+.auth-hero { text-align: center; margin-bottom: 16px; }
+.auth-logo {
+  width: 60px; height: 60px; margin: 4px auto 12px; border-radius: 18px; display: grid; place-items: center; font-size: 28px; color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.google-block .g-btn { display: flex; justify-content: center; min-height: 44px; }
+.legacy-link { text-align: center; margin-top: 14px; font-size: 13px; }

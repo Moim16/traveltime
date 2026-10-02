@@ -9,6 +9,7 @@
 import { db } from './db.js';
 import { imagesReady, signedUrl } from './images.js';
 import { readStory, excerpt } from './story.js';
+import { avatarOf } from './avatar.js';
 
 export const publicPhoto = (p) => ({
   id: Number(p.id),
@@ -41,6 +42,7 @@ export const publicCard = (v) => ({
   startDay: v.startDay ?? null,
   endDay: v.endDay ?? null,
   author: v.authorName,
+  authorAvatar: avatarOf({ avatar: v.authorAvatar, googlePicture: v.authorPicture }),
   excerpt: excerpt(readStory(v.body)),
   cover: v.coverCfId && imagesReady() ? signedUrl(v.coverCfId, 'ttcard') : null,
   photoCount: Number(v.photoCount ?? 0),
@@ -52,7 +54,7 @@ export const publicCard = (v) => ({
 // Las columnas de una tarjeta: autor, portada y conteos en una sola consulta.
 export const CARD_SELECT = `
   SELECT v.id, v.title, v.placeId, v.placeName, v.startDay, v.endDay, v.body, v.publishedAt,
-         u.name authorName,
+         u.name authorName, u.avatar authorAvatar, u.googlePicture authorPicture,
          -- el viaje, solo si tambien esta publicado
          (SELECT t.id FROM trips t WHERE t.id = v.tripId AND t.publishedAt IS NOT NULL) tripId,
          (SELECT t.title FROM trips t WHERE t.id = v.tripId AND t.publishedAt IS NOT NULL) tripTitle,

@@ -3,6 +3,7 @@
 //  GET /api/public?home=1           -> { recommendations, places, stats } para la portada
 //  GET /api/public?feed=1&before=…  -> { visits, next } mas recomendaciones (paginado)
 //  GET /api/public?visit=12         -> { visit } una visita publicada completa
+//  GET /api/public?user=moim16      -> { profile, visits } perfil publico: "Sobre mi" y lo publicado
 //  GET /api/public?trip=3           -> { trip } un viaje publicado, con sus visitas publicadas
 //  GET /api/public?under=NIC        -> { pins } los lugares publicados dentro de un lugar
 //                                      (para verlos en el mapa)
@@ -15,6 +16,7 @@ import { db, ensureSchema } from './_lib/db.js';
 import { parseId, parsePlace } from './_lib/http.js';
 import { CARD_SELECT, publicCard, publishedVisit } from './_lib/public.js';
 import { tripVisits } from './_lib/trips.js';
+import { publicProfile } from './_lib/profile.js';
 
 const PAGE = 12;
 
@@ -49,6 +51,22 @@ export default async function handler(req, res) {
     //    lee el CDN y no llega al navegador). Despublicar tarda <= 60 s en el CDN.
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Vercel-CDN-Cache-Control', 'max-age=60, stale-while-revalidate=300');
+
+    if (q.user) {
+      const name = String(q.user).slice(0, 40);
+      const profile = await publicProfile(name);
+      if (!profile) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
+        return res.status(404).json({ error: 'Este viajero no existe.' });
+      }
+      const rs = await db.execute({
+        sql: `${CARD_SELECT} WHERE v.userId = ? AND v.publishedAt IS NOT NULL ORDER BY v.publishedAt DESC LIMIT 60`,
+        args: [profile.id],
+      });
+      const { id: _id, ...shown } = profile;
+      return res.status(200).json({ profile: shown, visits: rs.rows.map(publicCard) });
+    }
 
     if (q.visit) {
       const v = await publishedVisit(parseId(q.visit));

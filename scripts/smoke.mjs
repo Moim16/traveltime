@@ -564,6 +564,26 @@ cf.uploaded.add(up2.data.cfId);
 await putProfile({ avatar: { kind: 'photo', cfId: up2.data.cfId } });
 check('al cambiar de foto, la anterior se borra de Cloudflare', cf.deleted.includes(up.data.cfId));
 check('el login trae el avatar', (await gcall({ sub: 'g-444', email: 'moises@gmail.com', picture: gPic })).data.user.avatar.kind === 'photo');
+  // "Sobre mi" y perfil publico.
+  const ab = await putProfile({
+    bio: 'Me gusta viajar lento.\n\n\n\nY comer bien.', livesIn: '  Managua,   Nicaragua ', languages: ['Español', 'Inglés', 'Español', ''],
+    interests: ['food', 'slow', 'hackear'], dream: 'Japón en primavera',
+  });
+  const about = ab.data.me?.about;
+  check('sobre mi: se guarda limpio', about?.bio === 'Me gusta viajar lento.\n\nY comer bien.' && about.livesIn === 'Managua, Nicaragua'
+    && about.languages.join() === 'Español,Inglés' && about.interests.join() === 'food,slow' && about.dream === 'Japón en primavera', about);
+  check('una bio muy larga no', (await putProfile({ bio: 'x'.repeat(501) })).status === 400);
+  check('demasiados idiomas no', (await putProfile({ languages: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] })).status === 400);
+  check('borrar un dato del sobre mi', (await putProfile({ dream: '' })).data.me.about.dream === null);
+  const st = ab.data.me.stats;
+  check('mis cifras incluyen lo privado', st && st.visits >= 1 && st.countries >= 1, st);
+  const pp = await call('public', 'GET', { query: { user: 'MOISES' } });
+  check('perfil publico por usuario (sin importar mayusculas)', pp.status === 200 && pp.data.profile.name === 'moises' && pp.data.profile.verified === true, pp.data);
+  check('el perfil publico trae el sobre mi', pp.data.profile.about.livesIn === 'Managua, Nicaragua');
+  check('el perfil publico no trae correo, id ni cifras privadas',
+    !('email' in pp.data.profile) && !('id' in pp.data.profile) && !('visits' in pp.data.profile.stats) && !('wishes' in pp.data.profile.stats), pp.data.profile);
+  check('el perfil publico solo lista lo publicado', pp.data.visits.every((v) => v.author === 'moises') && pp.data.profile.stats.published === pp.data.visits.length, pp.data);
+  check('un viajero que no existe: 404', (await call('public', 'GET', { query: { user: 'nadie-asi' } })).status === 404);
 }
 
 console.log(`${passed} pruebas bien${failures.length ? `, ${failures.length} mal:\n${failures.join('\n')}` : ''}`);

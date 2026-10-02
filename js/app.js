@@ -8,13 +8,14 @@ import * as maplibregl from '/vendor/maplibre/maplibre-gl.mjs';
 import * as geo from './geo.js';
 import * as visits from './visits.js';
 import * as account from './account.js';
+import { avatarHtml } from './avatar.js';
 import { api } from './api.js';
 import { uploadAll } from './photos.js';
 import { KINDS, kindOf, toGeoJSON, pinForm, pinCard } from './pins.js';
 import { esc, toast, ask, busy, formatRange } from './ui.js';
 import { renderStory } from './story.js';
 import { openWriter, closeWriter } from './editor.js';
-import { renderHome, renderPublicVisit, renderTrip, tripForm, closePage, wantToGo, beenThere, invitesHtml, respondInvite } from './pages.js';
+import { renderHome, renderPublicVisit, renderTrip, renderProfile, tripForm, closePage, wantToGo, beenThere, invitesHtml, respondInvite } from './pages.js';
 import { BASEMAPS, currentBasemap, setBasemap, tintBasemap } from './basemap.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -497,10 +498,13 @@ const find = (fc, id) => fc?.features.filter((f) => (f.properties.id ?? f.proper
 
 // "NIC.granada.granada/v/12/editar" -> { place, visit: 12, edit: true }
 //   '#/' portada · '#/mundo' el globo · '#/p/12' una visita publicada
+//   '#/perfil' mi perfil · '#/u/moim16' el perfil publico de alguien
 function parseRoute(hash) {
   const [place, v, id, action] = decodeURIComponent(hash.replace(/^#\/?/, '')).split('/');
   if (!place) return { page: 'home' };
   if (place === 'p') return { page: 'public', id: Number(v) || null };
+  if (place === 'perfil') return { page: 'profile', name: null };
+  if (place === 'u') return { page: 'profile', name: v || null };
   if (place === 'viaje') return { page: 'trip', id: Number(v) || null };
   if (place === 't') return { page: 'publicTrip', id: Number(v) || null };
   if (place === 'mundo') return { place: null, visit: null, edit: false };
@@ -545,6 +549,10 @@ async function show(route) {
   spin(false);
   if (route.page === 'public') {
     renderPublicVisit(route.id, { go, openViewer: (photos, i) => openPhoto(i, { photos, readOnly: true }) });
+    return;
+  }
+  if (route.page === 'profile') {
+    renderProfile(route.name, { go });
     return;
   }
   if (route.page === 'trip' || route.page === 'publicTrip') {
@@ -724,7 +732,7 @@ function renderPanel() {
                 .join('')}</ul>`
             : '<p class="note">Agrupa tus visitas en viajes: una línea de tiempo con su ruta en el mapa.</p>')
         : `<p class="note">Recorre el mundo, marca los lugares donde estuviste y escribe lo que hiciste en cada uno.</p>
-           <div class="actions start"><button class="primary" data-auth="signup">Crear cuenta</button><button class="secondary" data-auth="login">Entrar</button></div>`);
+           <div class="actions start"><button class="primary" data-auth="login">Entrar con Google</button></div>`);
     return;
   }
 
@@ -1318,11 +1326,12 @@ document.addEventListener('click', async (e) => {
 const accountBtn = $('#account');
 function renderAccountButton() {
   const me = account.current();
-  accountBtn.textContent = me ? (me.fullName || me.name).trim().charAt(0).toUpperCase() : 'Entrar';
+  if (me) accountBtn.innerHTML = avatarHtml(me.avatar, me.fullName || me.name, 'av-fill');
+  else accountBtn.textContent = 'Entrar';
   accountBtn.classList.toggle('avatar', Boolean(me));
   accountBtn.setAttribute('aria-label', me ? `Tu cuenta (${me.name})` : 'Entrar o crear cuenta');
 }
-accountBtn.addEventListener('click', () => (account.current() ? account.openAccount() : account.openAuth('login')));
+accountBtn.addEventListener('click', () => (account.current() ? (location.hash = '#/perfil') : account.openAuth('login')));
 account.onChange(async (me) => {
   renderAccountButton();
   if (me) await visits.load().catch((e) => toast(e.message, 'err'));
@@ -1341,8 +1350,9 @@ renderAccountButton();
 const picker = $('#basemap');
 picker.innerHTML = BASEMAPS.map((b) => `<option value="${b.key}">${esc(b.label)}</option>`).join('');
 picker.value = currentBasemap(true).key;
-picker.addEventListener('change', () => {
-  setBasemap(picker.value);
+picker.addEventListener('change', () => setBasemap(picker.value));
+addEventListener('tt:basemap', () => {
+  picker.value = currentBasemap(true).key;
   map.setStyle(currentBasemap().url, { diff: false });
 });
 // En "Automático" el mapa sigue al tema del sistema.

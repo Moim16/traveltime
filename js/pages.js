@@ -7,6 +7,8 @@ import { api } from './api.js';
 import * as account from './account.js';
 import { esc, toast, ask, modal, formatRange } from './ui.js';
 import { renderStory } from './story.js';
+import { avatarHtml } from './avatar.js';
+import { INTERESTS } from './interests.js';
 import { placePoint } from './geo.js';
 import { kindOf, KINDS } from './pins.js';
 import { currentBasemap } from './basemap.js';
@@ -105,7 +107,7 @@ export async function respondInvite(tripId, accept, go) {
   }
 }
 
-const authorLine = (a) => `<span class="author"><span class="avatar-sm" aria-hidden="true">${esc((a ?? '?').charAt(0).toUpperCase())}</span>@${esc(a)}</span>`;
+const authorLine = (a, avatar) => `<span class="author">${avatarHtml(avatar, a)}@${esc(a)}</span>`;
 const placeShort = (pn) => (pn ?? '').split(',').filter((_, i, all) => i === 0 || i === all.length - 1).join(', ');
 
 function cardHtml(v, i) {
@@ -116,7 +118,7 @@ function cardHtml(v, i) {
       <div class="rec-body">
         <h3>${esc(v.title)}</h3>
         ${v.excerpt ? `<p>${esc(v.excerpt)}</p>` : ''}
-        <div class="rec-meta">${authorLine(v.author)}<span>${v.photoCount ? `📷 ${v.photoCount}` : ''} ${v.pinCount ? `📍 ${v.pinCount}` : ''}</span></div>
+        <div class="rec-meta">${authorLine(v.author, v.authorAvatar)}<span>${v.photoCount ? `📷 ${v.photoCount}` : ''} ${v.pinCount ? `📍 ${v.pinCount}` : ''}</span></div>
       </div>
     </a>
   </article>`;
@@ -144,7 +146,7 @@ export async function renderHome({ go, countVisited, wishes, invites = () => [] 
         <p class="hero-sub reveal" style="--i:2">Marca en el mapa los países, departamentos y ciudades que visitaste. Escribe lo que hiciste, con tus fotos y los lugares exactos. Y si quieres, compártelo para que otros descubran a dónde ir.</p>
         <div class="hero-cta reveal" style="--i:3">
           <a class="primary big" href="#/mundo">${me ? 'Abrir mi mapa' : 'Explorar el mapa'} →</a>
-          ${me ? '' : '<button class="secondary big" data-auth="signup">Crear cuenta</button>'}
+
           <button class="secondary big install-btn" data-install hidden>📲 Instalar app</button>
         </div>
         <p class="hero-stats reveal" style="--i:4" id="home-stats"></p>
@@ -487,7 +489,7 @@ export async function renderPublicVisit(id, { go, openViewer }) {
       <div class="article-title wrap-narrow">
         <p class="eyebrow">📍 ${esc(v.placeName ?? '')}</p>
         <h1>${esc(v.title)}</h1>
-        <p class="article-meta">${authorLine(v.author)} · ${esc(formatRange(v.startDay, v.endDay))}${v.trip ? ` · 🧳 <a class="trip-link" href="#/t/${v.trip.id}">${esc(v.trip.title)}</a>` : ''}</p>
+        <p class="article-meta"><a class="author-link" href="#/u/${esc(v.author)}">${authorLine(v.author, v.authorAvatar)}</a> · ${esc(formatRange(v.startDay, v.endDay))}${v.trip ? ` · 🧳 <a class="trip-link" href="#/t/${v.trip.id}">${esc(v.trip.title)}</a>` : ''}</p>
       </div>
     </header>
     <div class="article-body wrap-narrow">
@@ -579,6 +581,111 @@ export async function renderPublicVisit(id, { go, openViewer }) {
     if (ph) {
       const i = ph.dataset.publicPhoto != null ? Number(ph.dataset.publicPhoto) : viewerPhotos.findIndex((p) => p.id === Number(ph.dataset.storyPhoto));
       if (i >= 0) openViewer(viewerPhotos, i);
+    }
+  });
+}
+
+// ---------- Perfil (mio en #/perfil, de otro en #/u/moim16) ----------
+
+const sinceText = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('es', { month: 'long', year: 'numeric' }) : null;
+};
+
+function aboutHtml(p, mine) {
+  const a = p.about ?? {};
+  const rows = [
+    a.livesIn && ['🏠', 'Vive en', esc(a.livesIn)],
+    a.languages?.length && ['🗣️', 'Habla', esc(a.languages.join(', '))],
+    a.dream && ['✨', 'Sueña con ir a', esc(a.dream)],
+    sinceText(p.since) && ['🧳', 'En TravelTime desde', esc(sinceText(p.since))],
+  ].filter(Boolean);
+  const chips = (a.interests ?? []).map((k) => INTERESTS[k]).filter(Boolean);
+  const empty = !a.bio && !rows.length && !chips.length;
+  return `
+    ${a.bio ? `<div class="pf-bio reveal">${esc(a.bio).replace(/\n/g, '<br>')}</div>` : ''}
+    ${rows.length ? `<ul class="pf-facts">${rows.map(([i, k, v], n) => `<li class="reveal" style="--i:${n}"><span class="pf-ico">${i}</span><span><small>${k}</small><b>${v}</b></span></li>`).join('')}</ul>` : ''}
+    ${chips.length ? `<h3 class="pf-h reveal">Le gusta viajar por</h3><div class="pf-chips">${chips.map((c, n) => `<span class="pf-chip reveal" style="--i:${n % 8}">${c.emoji} ${esc(c.label)}</span>`).join('')}</div>` : ''}
+    ${empty ? `<div class="empty reveal"><span>👋</span><p>${mine ? 'Cuéntale al mundo quién eres: dónde vives, qué idiomas hablas y cómo te gusta viajar.' : 'Todavía no escribió nada sobre sí.'}</p>${mine ? '<button class="primary" data-edit-profile>Completar mi perfil</button>' : ''}</div>` : ''}`;
+}
+
+export async function renderProfile(name, { go }) {
+  const el = openPage('article profile-page');
+  el.innerHTML = '<div class="article-loading"><div class="spinner"></div></div>';
+  const me = account.current();
+  const mine = !name || (me && me.name.toLowerCase() === name.toLowerCase());
+  if (mine && !me) {
+    el.innerHTML = `<div class="article-missing"><span>🧭</span><h2>Entra para ver tu perfil</h2><button class="primary" data-auth="login">Entrar con Google</button></div>`;
+    return;
+  }
+  let p;
+  let visits = [];
+  try {
+    const r = await api('public', { query: { user: mine ? me.name : name } });
+    visits = r.visits;
+    // El mio sale de "me": trae las cifras privadas (marcas, visitas sin publicar).
+    p = mine ? { ...r.profile, ...me, about: me.about, stats: me.stats, verified: me.hasGoogle } : r.profile;
+  } catch (e) {
+    el.innerHTML = `<div class="article-missing"><span>🧭</span><h2>${esc(e.status === 404 ? 'Este viajero no existe' : 'No se pudo abrir')}</h2><a class="primary" href="#/">Ir al inicio</a></div>`;
+    return;
+  }
+  if (page?.el !== el) return;
+  const s = p.stats ?? {};
+  const stats = mine
+    ? [[s.countries, s.countries === 1 ? 'país' : 'países'], [s.cities, s.cities === 1 ? 'ciudad' : 'ciudades'], [s.visits, s.visits === 1 ? 'visita' : 'visitas'], [s.photos, 'fotos'], [s.published, s.published === 1 ? 'publicada' : 'publicadas'], [s.wishes, 'quiero ir']]
+    : [[s.published, s.published === 1 ? 'historia' : 'historias'], [s.countries, s.countries === 1 ? 'país' : 'países'], [s.photos, 'fotos']];
+  const display = p.fullName || p.name;
+  el.innerHTML = `
+    <div class="pf-top"><button class="glass-btn" data-back aria-label="Volver">←</button>
+      ${mine ? '<button class="glass-btn" data-edit-profile>✎ Editar perfil</button>' : '<button class="glass-btn" data-share>Compartir</button>'}</div>
+    <div class="pf-wrap">
+      <aside class="pf-card reveal">
+        <div class="pf-av">${avatarHtml(p.avatar, display, 'avatar-xl')}${p.verified ? '<span class="pf-verified" title="Entra con Google">✓</span>' : ''}</div>
+        <h1>${esc(display)}</h1>
+        <p class="pf-handle">@${esc(p.name)}${p.about?.livesIn ? ` · ${esc(p.about.livesIn)}` : ''}</p>
+        <div class="pf-stats">${stats.map(([n, l], i) => `<div class="reveal" style="--i:${i}"><b data-count="${Number(n) || 0}">0</b><span>${l}</span></div>`).join('')}</div>
+        ${p.verified ? '<p class="pf-badge">🛡️ Identidad confirmada con Google</p>' : ''}
+        ${mine ? '<p class="note pf-private">Las cifras de visitas, fotos y "quiero ir" solo las ves tú. Tu perfil público muestra lo que publicas y tu "Sobre mí".</p>' : ''}
+        ${mine ? `<a class="link" href="#/u/${esc(p.name)}">Ver cómo lo ven los demás →</a>` : ''}
+      </aside>
+      <section class="pf-main">
+        <p class="eyebrow reveal">Sobre ${mine ? 'mí' : esc(display.split(' ')[0])}</p>
+        <h2 class="reveal">${mine ? 'Tu perfil de viajero' : `Hola, soy ${esc(display.split(' ')[0])}`}</h2>
+        ${aboutHtml(p, mine)}
+        <p class="eyebrow reveal pf-sep">Historias</p>
+        <h2 class="reveal">${visits.length ? `Lo que ${mine ? 'publicaste' : 'contó'}` : 'Sin historias publicadas'}</h2>
+        ${visits.length
+          ? `<div class="rec-grid">${visits.map(cardHtml).join('')}</div>`
+          : `<div class="empty reveal"><span>📖</span><p>${mine ? 'Cuando publiques una visita, aparece aquí y en la portada.' : 'Cuando publique una visita, aparece aquí.'}</p></div>`}
+      </section>
+    </div>`;
+  const io = reveal(el);
+  // Las cifras suben desde 0, como un contador.
+  const counters = [...el.querySelectorAll('[data-count]')];
+  const t0 = performance.now();
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let raf = 0;
+  const tick = (t) => {
+    const k = reduce ? 1 : Math.min(1, (t - t0) / 900);
+    const ease = 1 - (1 - k) ** 3;
+    counters.forEach((c) => (c.textContent = String(Math.round(Number(c.dataset.count) * ease))));
+    if (k < 1) raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  page.cleanup = () => (io?.disconnect(), cancelAnimationFrame(raf));
+
+  el.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-back]')) return history.length > 1 ? history.back() : go(null);
+    if (e.target.closest('[data-edit-profile]')) return account.openAccount();
+    if (e.target.closest('[data-share]')) {
+      const url = location.href;
+      try {
+        if (navigator.share) await navigator.share({ title: `${display} en TravelTime`, url });
+        else {
+          await navigator.clipboard.writeText(url);
+          toast('Enlace copiado ✓');
+        }
+      } catch {}
     }
   });
 }

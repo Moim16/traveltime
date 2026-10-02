@@ -21,7 +21,7 @@ Mismo stack que `deudas`: sin build, funciones serverless de Vercel y Turso/libS
 
 | Endpoint | Qué hace |
 |---|---|
-| `api/auth.js` | Entrar con Google; registro con contraseña (con código por correo si hay `RESEND_API_KEY`), entrada, salida, código de recuperación y cambio de contraseña |
+| `api/auth.js` | Entrar con Google, salir, y el perfil (nombre, avatar, "Sobre mí"). La contraseña queda solo para cuentas de antes que aún no conectan Google |
 | `api/marks.js` | Lo visitado: lo marcado más los lugares que tienen visitas |
 | `api/visits.js` | Visitas de un lugar o de lo que hay dentro (por prefijo del id); publicar; "Ya estuve" (`fromPinId`) |
 | `api/photos.js` | Fotos de una visita: pedir la subida, confirmarla, pie de foto y borrar |
@@ -42,9 +42,9 @@ npm run dev  # http://localhost:3100, con las claves del .env (contra Turso si e
 ### Cuentas
 
 - **Una sesión por dispositivo.** Entrar desde el teléfono no cierra la del computador. Cambiar la contraseña cierra las demás sesiones, y el código de recuperación las cierra todas. En la base solo queda el sha256 del token.
-- **Entrar con Google** (`GOOGLE_CLIENT_ID`, el ID de cliente OAuth de tipo Aplicación web; no hace falta el secreto). El navegador recibe de Google un ID token firmado y el servidor lo verifica (`api/_lib/google.js`): firma RS256 con las claves públicas de Google, `aud`, emisor, vencimiento y correo verificado. Google ya confirma el correo, así que **no hace falta dominio en Resend** para abrir el registro: `ALLOW_SIGNUP=0` cierra el de contraseña y `ALLOW_GOOGLE_SIGNUP` (abierto por defecto) controla el de Google. El usuario sale del correo (`rosa.perez`, `rosa.perez2`…). **Una cuenta de Google solo se une sola a una existente si el correo de esa cuenta estaba verificado**: si no, quien se registró con un correo ajeno se quedaría con la cuenta de su dueño. En ese caso se entra con la contraseña y se conecta Google desde *Tu cuenta*.
+- **Solo Google** (`GOOGLE_CLIENT_ID`, el ID de cliente OAuth de tipo Aplicación web; no hace falta el secreto). El navegador recibe de Google un ID token firmado y el servidor lo verifica (`api/_lib/google.js`): firma RS256 con las claves públicas de Google, `aud`, emisor, vencimiento y correo verificado. El usuario sale del correo (`rosa.perez`, `rosa.perez2`…). El registro con contraseña está cerrado (`ALLOW_PASSWORD_SIGNUP=1` lo abre, solo lo usan las pruebas) y la contraseña solo abre cuentas que todavía no conectaron Google: mientras quede alguna, la ventana de entrar muestra "¿Tu cuenta es de antes?" (`legacyLogin` en `?config=1`) y desaparece sola. **Una cuenta de Google solo se une sola a una existente si el correo de esa cuenta estaba verificado**: si no, quien se registró con un correo ajeno se quedaría con la cuenta de su dueño.
+- **Perfil** (`#/perfil`, y el público en `#/u/usuario`): avatar (inicial, ícono con color, la foto de Google, que se guarda en cada entrada, o una foto subida a Cloudflare, validada como propia), nombre, y el "Sobre mí" (presentación, dónde vive, idiomas, intereses de una lista fija, viaje soñado; `api/_lib/profile.js`). El público muestra solo eso y lo publicado: nunca marcas, visitas privadas, correo ni "Quiero ir".
 - **Código de recuperación** de 12 caracteres, que se muestra una vez y es de un solo uso. 5 intentos fallidos bloquean 15 minutos.
-- Sin `RESEND_API_KEY` el registro no confirma el correo. **Sin dominio verificado en Resend** solo llega el código al correo de la cuenta de Resend: mientras tanto conviene `ALLOW_SIGNUP=0` en Vercel.
 
 ### Privacidad: qué es de quién
 

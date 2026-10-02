@@ -1,7 +1,7 @@
 // Cuentas.
 //
 //  GET    /api/auth                 -> { me, recovery }
-//  GET    /api/auth?config=1        -> { googleClientId, passwordSignup } (sin sesion)
+//  GET    /api/auth?config=1        -> { googleClientId, passwordSignup, legacyLogin } (sin sesion)
 //  POST   /api/auth?google=1        { credential } -> entrar (o crear la cuenta) con Google.
 //                                   Con sesion y &link=1: conectar Google a MI cuenta.
 //  POST   /api/auth                 { name, password } -> login. { user, token }
@@ -16,8 +16,9 @@
 //  PUT    /api/auth?password=1      { currentPassword, password } -> cambia la
 //                                   contraseña y cierra las otras sesiones.
 //  PUT    /api/auth?recovery=1      { currentPassword } -> codigo de recuperacion nuevo.
-//  PUT    /api/auth?profile=1       { fullName?, avatar? } -> nombre visible y avatar
-//                                   (api/_lib/avatar.js). { me }
+//  PUT    /api/auth?profile=1       { fullName?, avatar?, bio?, livesIn?, languages?, interests?, dream? }
+//                                   -> nombre, avatar (api/_lib/avatar.js) y "Sobre mi"
+//                                   (api/_lib/profile.js). { me }
 //  POST   /api/auth?avatarUpload=1  -> { cfId, uploadURL } para subir la foto de perfil;
 //                                   despues PUT profile con avatar { kind: 'photo', cfId }.
 //
@@ -43,6 +44,7 @@ import { readJson, clean } from './_lib/http.js';
 import { mailReady, validEmail, cleanEmail, sendCode, newCode } from './_lib/mail.js';
 import { googleClientId, verifyGoogleToken } from './_lib/google.js';
 import { avatarOf, parseAvatar, avatarPhotoId, cleanGooglePicture } from './_lib/avatar.js';
+import { aboutOf, parseAbout, myStats } from './_lib/profile.js';
 import { imagesReady, directUpload, imageInfo, deleteImage } from './_lib/images.js';
 import {
   hashPassword, verifyPassword, openSession, closeSession, closeOtherSessions, currentUser, deny,
@@ -113,7 +115,15 @@ async function nameFromEmail(email) {
 async function meResponse(me) {
   const u = (await db.execute({ sql: 'SELECT * FROM users WHERE id = ?', args: [me.id] })).rows[0];
   return {
-    me: { ...publicUser(u), hasGoogle: Boolean(u.googleSub), hasPassword: Boolean(u.passwordHash), hasGooglePicture: Boolean(u.googlePicture) },
+    me: {
+      ...publicUser(u),
+      hasGoogle: Boolean(u.googleSub),
+      hasPassword: Boolean(u.passwordHash),
+      hasGooglePicture: Boolean(u.googlePicture),
+      since: u.createdAt,
+      about: aboutOf(u),
+      stats: await myStats(Number(u.id)),
+    },
     recovery: { at: u.recoveryAt ?? null },
   };
 }
@@ -125,7 +135,11 @@ export default async function handler(req, res) {
     const body = req.method === 'GET' ? {} : await readJson(req);
 
     if (req.method === 'GET' && q.config) {
-      return res.status(200).json({ googleClientId: googleClientId(), passwordSignup: SIGNUP_OPEN });
+      // legacyLogin: queda alguna cuenta de antes (con contraseña, sin Google). Mientras
+      // haya, la ventana de entrar ofrece la contraseña para poder conectar Google;
+      // cuando ya no quede ninguna, desaparece sola.
+      const legacy = await db.execute("SELECT 1 FROM users WHERE googleSub IS NULL AND passwordHash != '' LIMIT 1");
+      return res.status(200).json({ googleClientId: googleClientId(), passwordSignup: SIGNUP_OPEN, legacyLogin: legacy.rows.length > 0 });
     }
 
     if (req.method === 'GET') {
@@ -345,6 +359,12 @@ export default async function handler(req, res) {
         if (!fullName) return res.status(400).json({ error: 'Escribe tu nombre.' });
         sets.push('fullName = ?');
         args.push(fullName);
+      }
+      const about = parseAbout(body);
+      if (about.error) return res.status(400).json({ error: about.error });
+      for (const [col, v] of Object.entries(about.cols)) {
+        sets.push(`${col} = ?`);
+        args.push(v);
       }
       let dropPhoto = null;
       if (body.avatar !== undefined) {

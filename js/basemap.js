@@ -34,11 +34,14 @@ function applyTheme() {
   else document.documentElement.dataset.theme = b.theme;
 }
 
+// Avisa con "tt:basemap": el mapa cambia de estilo y el selector se pone al dia
+// (se puede cambiar desde el selector del mapa o desde "Tu perfil").
 export function setBasemap(key) {
   try {
     localStorage.setItem(KEY, key);
   } catch {}
   applyTheme();
+  dispatchEvent(new Event('tt:basemap'));
 }
 
 applyTheme();
