@@ -7,7 +7,8 @@
 //                                         fromPinId: "ya estuve" desde una recomendacion; la visita
 //                                         nueva lleva ese lugar (solo nombre, tipo y ubicacion)
 //  PUT    /api/visits?id=12            { title, startDay, endDay, body } (placeId no
-//                                         cambia: mover una visita es borrarla y crearla)
+//                                         cambia: mover una visita es borrarla y crearla).
+//                                         Sin body, el relato queda como estaba.
 //  PUT    /api/visits?id=12&publish=1  { published } publicar o dejar de publicar
 //  DELETE /api/visits?id=12              (se lleva sus fotos, tambien de Cloudflare)
 //
@@ -142,12 +143,17 @@ export default async function handler(req, res) {
 
     if (req.method === 'PUT') {
       const id = parseId(q.id);
-      if (!id || !(await mine(me.id, id))) return notYours(res);
-      const f = parseFields(await readJson(req));
+      const v = id && (await mine(me.id, id));
+      if (!v) return notYours(res);
+      const input = await readJson(req);
+      const f = parseFields(input);
       if (!f.ok) return res.status(400).json({ error: f.error });
+      // Sin "body" no se toca el relato: la app cambia el titulo o las fechas sin
+      // mandarlo, y un relato no se borra por omision. Borrarlo es mandar null.
+      const body = 'body' in input ? f.value.body : v.body;
       await db.execute({
         sql: 'UPDATE visits SET title = ?, startDay = ?, endDay = ?, body = ?, updatedAt = ? WHERE id = ? AND userId = ?',
-        args: [f.value.title, f.value.startDay, f.value.endDay, f.value.body, nowIso(), id, me.id],
+        args: [f.value.title, f.value.startDay, f.value.endDay, body, nowIso(), id, me.id],
       });
       return res.status(200).json({ visit: ownVisit(await mine(me.id, id), true) });
     }

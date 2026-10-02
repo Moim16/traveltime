@@ -160,6 +160,8 @@ check('el resumen sale en texto plano', excerpt(JSON.parse(doc.value)) === 'Lleg
 
 const vb = await call('visits', 'PUT', { token: A, query: { id: V1 }, body: { title: 'Semana Santa 2025', startDay: '2025-04-17', body: { blocks: [{ type: 'paragraph', data: { text: 'Hola <img src=x onerror=alert(1)>' } }] } } });
 check('el endpoint guarda bloques ya limpios', vb.data.visit?.body?.blocks?.[0]?.data?.text === 'Hola', vb.data.visit?.body);
+const vt = await call('visits', 'PUT', { token: A, query: { id: V1 }, body: { title: 'Semana Santa 2025', startDay: '2025-04-17' } });
+check('cambiar el titulo sin mandar el relato no lo borra', vt.data.visit?.body?.blocks?.[0]?.data?.text === 'Hola', vt.data.visit?.body);
 check('una visita marca el lugar como visitado', (await call('marks', 'GET', { token: A })).data.marks.includes('NIC.granada.granada'));
 
 await call('visits', 'POST', { token: A, body: { placeId: 'NIC.masaya.masaya', title: 'Volcán Masaya', startDay: '2026-01-05' } });
