@@ -65,6 +65,18 @@ export async function isUploaded(cfId) {
   }
 }
 
+// { uploaded, meta } de una imagen, o null si no existe. meta es lo que se le
+// paso a directUpload: dice de quien es.
+export async function imageInfo(cfId) {
+  try {
+    const r = await cf('GET', `/v1/${encodeURIComponent(cfId)}`);
+    return { uploaded: !r.draft, meta: r.meta ?? {} };
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
 export async function deleteImage(cfId) {
   try {
     await cf('DELETE', `/v1/${encodeURIComponent(cfId)}`);

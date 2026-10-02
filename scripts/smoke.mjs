@@ -18,6 +18,7 @@ Object.assign(process.env, {
   CF_IMAGES_TOKEN: 'token-de-prueba',
   CF_IMAGES_SIGNING_KEY: 'clave-de-firma-de-prueba',
   GOOGLE_CLIENT_ID: 'cliente-de-prueba.apps.googleusercontent.com',
+  ALLOW_PASSWORD_SIGNUP: '1', // la app es solo Google; las pruebas crean cuentas con clave
 });
 // Las claves publicas del Google de mentira (las llena la seccion de Google).
 const googleJwks = { keys: [] };
@@ -34,7 +35,7 @@ globalThis.fetch = async (url, opts = {}) => {
     return ok({ id, uploadURL: `https://upload.imagedelivery.net/${id}` });
   }
   const m = u.match(/\/images\/v1\/([^/?]+)$/);
-  if (m && opts.method === 'GET') return ok({ id: m[1], draft: !cf.uploaded.has(m[1]) });
+  if (m && opts.method === 'GET') return ok({ id: m[1], draft: !cf.uploaded.has(m[1]), meta: cf.created.find((c) => c.id === m[1])?.meta ?? {} });
   if (m && opts.method === 'DELETE') {
     cf.deleted.push(m[1]);
     return ok({});
@@ -520,6 +521,50 @@ check('no se conecta una cuenta de Google que ya es de otro', (await gcall({ sub
 check('conectar Google a mi cuenta', (await gcall({ sub: 'g-444', email: 'moises@gmail.com' }, undefined, { query: { link: 1 }, token: linkSession })).status === 200);
 const viaG = await gcall({ sub: 'g-444', email: 'moises@gmail.com' });
 check('despues entro con Google a mi misma cuenta', viaG.data.user?.name === 'moises', viaG.data);
+
+// ---------- Solo Google y perfil ----------
+{
+
+check('con Google conectado, la contraseña ya no abre (403)',
+  (await call('auth', 'POST', { body: { name: 'moises', password: 'otraclave3' } })).status === 403);
+check('una contraseña equivocada sigue diciendo lo de siempre (no cuenta quien existe)',
+  (await call('auth', 'POST', { body: { name: 'moises', password: 'malmalmal1' } })).status === 401);
+const gPic = 'https://lh3.googleusercontent.com/a/foto-de-prueba';
+const withPic = await gcall({ sub: 'g-444', email: 'moises@gmail.com', picture: gPic });
+const G = withPic.data.token;
+const meWithPic = (await call('auth', 'GET', { token: G })).data.me;
+check('la foto de Google queda guardada para elegirla', meWithPic.hasGooglePicture === true && meWithPic.avatar.kind === 'initial', meWithPic);
+await gcall({ sub: 'g-555', email: 'raro@gmail.com', picture: 'https://malo.com/x.png' });
+check('una foto que no es de Google no se guarda',
+  (await db.execute("SELECT googlePicture FROM users WHERE googleSub = 'g-555'")).rows[0].googlePicture === null);
+
+const putProfile = (body, token = G) => call('auth', 'PUT', { query: { profile: 1 }, body, token });
+const em = await putProfile({ avatar: { kind: 'emoji', emoji: '🧭', color: '#10b981' }, fullName: 'Moisés M.' });
+check('avatar con icono y color, y el nombre', em.status === 200 && em.data.me.avatar.emoji === '🧭' && em.data.me.avatar.color === '#10b981' && em.data.me.fullName === 'Moisés M.', em.data);
+check('un icono fuera de la lista no', (await putProfile({ avatar: { kind: 'emoji', emoji: '💩' } })).status === 400);
+check('un color fuera de la lista queda en el de siempre', (await putProfile({ avatar: { kind: 'emoji', emoji: '🧭', color: 'red' } })).data.me.avatar.color === '#f2545b');
+check('el nombre no puede quedar vacio', (await putProfile({ fullName: '   ' })).status === 400);
+const gAv = await putProfile({ avatar: { kind: 'google' } });
+check('usar la foto de Google', gAv.data.me.avatar.kind === 'google' && gAv.data.me.avatar.url === gPic, gAv.data);
+check('perfil sin sesion', (await putProfile({ fullName: 'x' }, null)).status === 401);
+
+const up = await call('auth', 'POST', { query: { avatarUpload: 1 }, token: G });
+check('pedir donde subir la foto de perfil', up.status === 200 && up.data.uploadURL && up.data.cfId, up.data);
+check('la foto sin subir todavia no se acepta', (await putProfile({ avatar: { kind: 'photo', cfId: up.data.cfId } })).status === 400);
+cf.uploaded.add(up.data.cfId);
+const ph = await putProfile({ avatar: { kind: 'photo', cfId: up.data.cfId } });
+check('foto de perfil subida', ph.status === 200 && ph.data.me.avatar.kind === 'photo' && ph.data.me.avatar.url.includes(up.data.cfId), ph.data);
+// Una foto de una visita de otra persona: su id se ve en las URL firmadas.
+const stranger = cf.created.find((c) => c.meta.kind !== 'avatar');
+cf.uploaded.add(stranger.id);
+check('no se puede poner de avatar una foto que no se subio como avatar mio',
+  (await putProfile({ avatar: { kind: 'photo', cfId: stranger.id } })).status === 400);
+const up2 = await call('auth', 'POST', { query: { avatarUpload: 1 }, token: G });
+cf.uploaded.add(up2.data.cfId);
+await putProfile({ avatar: { kind: 'photo', cfId: up2.data.cfId } });
+check('al cambiar de foto, la anterior se borra de Cloudflare', cf.deleted.includes(up.data.cfId));
+check('el login trae el avatar', (await gcall({ sub: 'g-444', email: 'moises@gmail.com', picture: gPic })).data.user.avatar.kind === 'photo');
+}
 
 console.log(`${passed} pruebas bien${failures.length ? `, ${failures.length} mal:\n${failures.join('\n')}` : ''}`);
 process.exit(failures.length ? 1 : 0);

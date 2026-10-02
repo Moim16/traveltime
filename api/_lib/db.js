@@ -55,7 +55,9 @@ async function initSchema() {
   // (codigo por correo, o Google). Una cuenta de Google solo se une sola a una
   // existente si el correo de esa cuenta estaba verificado: si no, alguien que
   // se registro con un correo ajeno se quedaria con la cuenta de su dueño.
-  for (const col of ['googleSub TEXT', 'emailVerified INTEGER NOT NULL DEFAULT 0']) {
+  // avatar: lo que se muestra en vez de la inicial (ver api/_lib/avatar.js).
+  // googlePicture: la foto de la cuenta de Google, para poder elegirla.
+  for (const col of ['googleSub TEXT', 'emailVerified INTEGER NOT NULL DEFAULT 0', 'avatar TEXT', 'googlePicture TEXT']) {
     try {
       await db.execute(`ALTER TABLE users ADD COLUMN ${col}`);
     } catch {

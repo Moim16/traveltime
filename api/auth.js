@@ -16,6 +16,14 @@
 //  PUT    /api/auth?password=1      { currentPassword, password } -> cambia la
 //                                   contraseña y cierra las otras sesiones.
 //  PUT    /api/auth?recovery=1      { currentPassword } -> codigo de recuperacion nuevo.
+//  PUT    /api/auth?profile=1       { fullName?, avatar? } -> nombre visible y avatar
+//                                   (api/_lib/avatar.js). { me }
+//  POST   /api/auth?avatarUpload=1  -> { cfId, uploadURL } para subir la foto de perfil;
+//                                   despues PUT profile con avatar { kind: 'photo', cfId }.
+//
+// SOLO GOOGLE: se entra con Google. El registro con contraseña esta cerrado
+// (ALLOW_PASSWORD_SIGNUP=1 lo abre: lo usan las pruebas) y la contraseña solo
+// sirve en cuentas que todavia no conectaron Google, para poder conectarla.
 //
 // Anti fuerza bruta: 5 fallos -> 15 minutos bloqueado. El codigo de recuperacion
 // comparte el contador con la contraseña.
@@ -34,6 +42,8 @@ import { db, ensureSchema, nowIso, newRecoveryCode, normalizeRecovery } from './
 import { readJson, clean } from './_lib/http.js';
 import { mailReady, validEmail, cleanEmail, sendCode, newCode } from './_lib/mail.js';
 import { googleClientId, verifyGoogleToken } from './_lib/google.js';
+import { avatarOf, parseAvatar, avatarPhotoId, cleanGooglePicture } from './_lib/avatar.js';
+import { imagesReady, directUpload, imageInfo, deleteImage } from './_lib/images.js';
 import {
   hashPassword, verifyPassword, openSession, closeSession, closeOtherSessions, currentUser, deny,
 } from './_lib/auth.js';
@@ -42,7 +52,7 @@ const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 const CODE_TTL_MS = 15 * 60 * 1000;
 const NAME_RE = /^[\p{L}\p{N}._-]{2,20}$/u;
-const SIGNUP_OPEN = process.env.ALLOW_SIGNUP !== '0';
+const SIGNUP_OPEN = process.env.ALLOW_PASSWORD_SIGNUP === '1';
 
 // Que esta mal en el usuario, dicho en concreto: un "usuario invalido" generico
 // no ayuda cuando el navegador autocompleto el campo con un correo y uno no lo nota.
@@ -60,7 +70,7 @@ function nameProblem(name) {
 const PW_MSG = 'La contraseña debe tener entre 8 y 64 caracteres.';
 const badPassword = (pw) => pw.length < 8 || pw.length > 64;
 
-const publicUser = (u) => ({ id: Number(u.id), name: u.name, fullName: u.fullName ?? null, email: u.email ?? null });
+const publicUser = (u) => ({ id: Number(u.id), name: u.name, fullName: u.fullName ?? null, email: u.email ?? null, avatar: avatarOf(u) });
 const isLocked = (u) => u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
 
 async function registerFail(u) {
@@ -75,17 +85,17 @@ const nameTaken = async (name) =>
 // Crea el usuario y responde con la sesion abierta y su codigo de recuperacion.
 // Con Google no hay contraseña (passwordHash vacio: ningun login por clave la
 // acepta) ni codigo de recuperacion: se recupera entrando con Google.
-async function createUser(res, { name, fullName, email, passwordHash, emailVerified = 0, googleSub = null }) {
+async function createUser(res, { name, fullName, email, passwordHash, emailVerified = 0, googleSub = null, googlePicture = null }) {
   const now = nowIso();
   const code = googleSub ? null : newRecoveryCode();
   const ins = await db.execute({
-    sql: `INSERT INTO users (name, fullName, email, passwordHash, recoveryHash, recoveryAt, emailVerified, googleSub, createdAt)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [name, fullName, email, passwordHash, code ? hashPassword(normalizeRecovery(code)) : null, code ? now : null, emailVerified, googleSub, now],
+    sql: `INSERT INTO users (name, fullName, email, passwordHash, recoveryHash, recoveryAt, emailVerified, googleSub, googlePicture, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [name, fullName, email, passwordHash, code ? hashPassword(normalizeRecovery(code)) : null, code ? now : null, emailVerified, googleSub, googlePicture, now],
   });
   const id = Number(ins.lastInsertRowid);
   const token = await openSession(id);
-  return res.status(201).json({ user: publicUser({ id, name, fullName, email }), token, ...(code ? { recovery: code } : {}), created: true });
+  return res.status(201).json({ user: publicUser({ id, name, fullName, email, googlePicture }), token, ...(code ? { recovery: code } : {}), created: true });
 }
 
 // Un usuario a partir del correo de Google: "moises.mejia@gmail.com" -> "moises.mejia";
@@ -97,6 +107,15 @@ async function nameFromEmail(email) {
     const name = n === 1 ? base : `${base}${n}`;
     if (!(await nameTaken(name))) return name;
   }
+}
+
+// Lo que ve la persona de su propia cuenta (GET y despues de cambiar el perfil).
+async function meResponse(me) {
+  const u = (await db.execute({ sql: 'SELECT * FROM users WHERE id = ?', args: [me.id] })).rows[0];
+  return {
+    me: { ...publicUser(u), hasGoogle: Boolean(u.googleSub), hasPassword: Boolean(u.passwordHash), hasGooglePicture: Boolean(u.googlePicture) },
+    recovery: { at: u.recoveryAt ?? null },
+  };
 }
 
 export default async function handler(req, res) {
@@ -112,9 +131,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const me = await currentUser(req);
       if (!me) return deny(res);
-      const rs = await db.execute({ sql: 'SELECT recoveryAt, googleSub, passwordHash FROM users WHERE id = ?', args: [me.id] });
-      const u = rs.rows[0];
-      return res.status(200).json({ me: { ...me, hasGoogle: Boolean(u?.googleSub), hasPassword: Boolean(u?.passwordHash) }, recovery: { at: u?.recoveryAt ?? null } });
+      return res.status(200).json(await meResponse(me));
     }
 
     if (req.method === 'POST' && q.google) {
@@ -134,13 +151,18 @@ export default async function handler(req, res) {
         if (bySub && Number(bySub.id) !== me.id) return res.status(409).json({ error: 'Esa cuenta de Google ya está conectada a otro usuario.' });
         // Si el correo de Google es el de mi cuenta, queda verificado.
         await db.execute({
-          sql: 'UPDATE users SET googleSub = ?, emailVerified = CASE WHEN email = ? COLLATE NOCASE THEN 1 ELSE emailVerified END WHERE id = ?',
-          args: [g.sub, g.email, me.id],
+          sql: 'UPDATE users SET googleSub = ?, googlePicture = ?, emailVerified = CASE WHEN email = ? COLLATE NOCASE THEN 1 ELSE emailVerified END WHERE id = ?',
+          args: [g.sub, cleanGooglePicture(g.picture), g.email, me.id],
         });
         return res.status(200).json({ ok: true });
       }
 
-      if (bySub) return res.status(200).json({ user: publicUser(bySub), token: await openSession(Number(bySub.id)) });
+      // La foto se trae en cada entrada: si la cambia en Google, aqui tambien.
+      const picture = cleanGooglePicture(g.picture);
+      if (bySub) {
+        await db.execute({ sql: 'UPDATE users SET googlePicture = ? WHERE id = ?', args: [picture, bySub.id] });
+        return res.status(200).json({ user: publicUser({ ...bySub, googlePicture: picture }), token: await openSession(Number(bySub.id)) });
+      }
 
       const byEmail = (await db.execute({ sql: 'SELECT * FROM users WHERE email = ? COLLATE NOCASE', args: [g.email] })).rows[0];
       if (byEmail) {
@@ -149,8 +171,8 @@ export default async function handler(req, res) {
             error: `Ya hay una cuenta con el correo ${g.email}. Entra con su usuario y contraseña, y desde "Tu cuenta" conecta Google.`,
           });
         }
-        await db.execute({ sql: 'UPDATE users SET googleSub = ? WHERE id = ?', args: [g.sub, byEmail.id] });
-        return res.status(200).json({ user: publicUser(byEmail), token: await openSession(Number(byEmail.id)) });
+        await db.execute({ sql: 'UPDATE users SET googleSub = ?, googlePicture = ? WHERE id = ?', args: [g.sub, picture, byEmail.id] });
+        return res.status(200).json({ user: publicUser({ ...byEmail, googlePicture: picture }), token: await openSession(Number(byEmail.id)) });
       }
 
       // Cuenta nueva. Con Google el correo ya viene verificado: no hace falta
@@ -164,6 +186,7 @@ export default async function handler(req, res) {
         passwordHash: '',
         emailVerified: 1,
         googleSub: g.sub,
+        googlePicture: picture,
       });
     }
 
@@ -261,6 +284,13 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    if (req.method === 'POST' && q.avatarUpload) {
+      const me = await currentUser(req);
+      if (!me) return deny(res);
+      if (!imagesReady()) return res.status(503).json({ error: 'Las fotos no están configuradas.' });
+      return res.status(200).json(await directUpload({ userId: me.id, kind: 'avatar' }));
+    }
+
     if (req.method === 'POST') {
       const name = (body.name ?? '').toString().trim();
       const pw = (body.password ?? '').toString();
@@ -274,6 +304,9 @@ export default async function handler(req, res) {
         return bad();
       }
       await db.execute({ sql: 'UPDATE users SET failedLogins = 0, lockedUntil = NULL WHERE id = ?', args: [u.id] });
+      // Con Google conectado, la contraseña ya no abre: despues del chequeo, para no
+      // contarle a cualquiera que usuarios existen.
+      if (u.googleSub) return res.status(403).json({ error: 'Esta cuenta entra con Google. Usa el botón «Continuar con Google».' });
       return res.status(200).json({ user: publicUser(u), token: await openSession(Number(u.id)) });
     }
 
@@ -299,6 +332,40 @@ export default async function handler(req, res) {
       await db.execute({ sql: 'UPDATE users SET passwordHash = ? WHERE id = ?', args: [hashPassword(pw), me.id] });
       await closeOtherSessions(me.id, req);
       return res.status(200).json({ ok: true });
+    }
+
+    if (req.method === 'PUT' && q.profile) {
+      const me = await currentUser(req);
+      if (!me) return deny(res);
+      const u = (await db.execute({ sql: 'SELECT * FROM users WHERE id = ?', args: [me.id] })).rows[0];
+      const sets = [];
+      const args = [];
+      if (body.fullName !== undefined) {
+        const fullName = clean(body.fullName, 80);
+        if (!fullName) return res.status(400).json({ error: 'Escribe tu nombre.' });
+        sets.push('fullName = ?');
+        args.push(fullName);
+      }
+      let dropPhoto = null;
+      if (body.avatar !== undefined) {
+        const a = parseAvatar(body.avatar, u);
+        if (a.error) return res.status(400).json({ error: a.error });
+        // La foto tiene que estar subida y ser de quien la pone: el id de una foto
+        // ajena se ve en las URL firmadas de las visitas compartidas.
+        if (a.cfId && a.value !== u.avatar) {
+          const info = await imageInfo(a.cfId);
+          if (!info?.uploaded || Number(info.meta.userId) !== me.id || info.meta.kind !== 'avatar') {
+            return res.status(400).json({ error: 'La foto no terminó de subir. Intenta de nuevo.' });
+          }
+        }
+        const old = avatarPhotoId(u.avatar);
+        if (old && old !== a.cfId) dropPhoto = old;
+        sets.push('avatar = ?');
+        args.push(a.value);
+      }
+      if (sets.length) await db.execute({ sql: `UPDATE users SET ${sets.join(', ')} WHERE id = ?`, args: [...args, me.id] });
+      if (dropPhoto) await deleteImage(dropPhoto).catch((e) => console.warn('[api/auth] avatar viejo:', e.message));
+      return res.status(200).json(await meResponse(me));
     }
 
     res.setHeader('Allow', 'GET, POST, PUT');
