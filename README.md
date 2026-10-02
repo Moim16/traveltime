@@ -97,6 +97,9 @@ NIC    Granada       Granada     Convento San Francisco, Isletas…
 - **Los lagos se restan** de las divisiones. geoBoundaries reparte el Cocibolca entre los municipios con líneas rectas, y Granada se veía medio lago.
 - **Simplificación adaptativa**: si un archivo pasa de ~800 KB (primer nivel) o ~900 KB (ciudades de un departamento), se vuelve a simplificar más fuerte. Canadá bajó de 4,2 MB a 723 KB.
 - Los nombres van en el **punto más interior** de cada polígono (`lx`/`ly`), no en el centroide, que en una media luna cae afuera.
+- **Una ciudad es una ciudad**, no sus comunas: `merge` funde las partes de una ciudad dentro de un departamento grande (las 34 comunas del Gran Santiago, los 33 *boroughs* de Londres, los 23 distritos de Budapest) y `whole` deja sin partir los departamentos que ya son una ciudad (Ciudad de México, CABA, Montevideo, Seúl, Tokio, Bangkok…). Se eligieron a mano: juntar todo lo que cae en una misma mancha urbana fundía también la Costa Brava o Kamakura con Yokohama.
+- Nombres **mal decodificados** en la fuente ("RegiÃ³n de ValparaÃ­so") se arreglan solos (`fixMojibake`).
+- **Si cambian ids** (un nombre corregido, una fusión), las marcas, visitas y deseos guardados se migran: `node scripts/place-renames.mjs <copia-de-geo-vieja> > renames.json` y después `node --env-file=.env scripts/migrate-place-ids.mjs renames.json` (muestra lo que haría; con `--apply` escribe).
 
 ```bash
 npm run geo                    # todo (~15 min; baja a .geo-cache/)

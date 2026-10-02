@@ -31,6 +31,11 @@ const PARALLEL = 4;
 // municipio es ADM2, pero en Chile ADM2 son provincias y la comuna es ADM3.
 // Sin entrada aqui: ADM1 y ADM2, con nombres genericos.
 // names: correcciones a mano de lo que viene mal escrito o en ingles en la fuente.
+// whole: departamentos que SON una ciudad (Ciudad de Mexico, CABA, Seul): no se
+//   parten en sus alcaldias o comunas; el departamento es el ultimo nivel. '*': todos.
+// merge: una ciudad partida en varias "ciudades" dentro de un departamento grande
+//   (Santiago en sus comunas, Londres en sus boroughs): se funden en una sola.
+//   Las demas del departamento quedan como estan (Colina, Talagante...).
 const COUNTRIES = {
   NIC: {
     labels: ['Departamento', 'Municipio'],
@@ -51,15 +56,22 @@ const COUNTRIES = {
   SLV: { labels: ['Departamento', 'Municipio'] },
   GTM: { labels: ['Departamento', 'Municipio'] },
   PAN: { labels: ['Provincia', 'Distrito'] },
-  MEX: { labels: ['Estado', 'Municipio'] },
+  MEX: { labels: ['Estado', 'Municipio'], names: { 'Distrito Federal': 'Ciudad de México', Mexico: 'Estado de México' }, whole: ['Ciudad de México'] },
   COL: { labels: ['Departamento', 'Municipio'] },
   VEN: { labels: ['Estado', 'Municipio'] },
   ECU: { labels: ['Provincia', 'Cantón'] },
   PER: { labels: ['Región', 'Provincia'] },
   BOL: { labels: ['Departamento', 'Provincia'] },
-  CHL: { city: 'ADM3', labels: ['Región', 'Comuna'] },
-  ARG: { labels: ['Provincia', 'Departamento'] },
-  URY: { labels: ['Departamento', 'Municipio'] },
+  CHL: {
+    city: 'ADM3',
+    labels: ['Región', 'Comuna'],
+    names: { 'Aysén del Gral.Ibañez del Campo': 'Aysén', 'Magallanes y Antártica Chilena': 'Magallanes y la Antártica Chilena' },
+    // Las 34 comunas del Gran Santiago (las 32 de la Provincia de Santiago, mas
+    // Puente Alto y San Bernardo): para quien viaja, es una ciudad.
+    merge: { Santiago: ['Santiago', 'Cerrillos', 'Cerro Navia', 'Conchalí', 'El Bosque', 'Estación Central', 'Huechuraba', 'Independencia', 'La Cisterna', 'La Florida', 'La Granja', 'La Pintana', 'La Reina', 'Las Condes', 'Lo Barnechea', 'Lo Espejo', 'Lo Prado', 'Macul', 'Maipú', 'Ñuñoa', 'Pedro Aguirre Cerda', 'Peñalolén', 'Providencia', 'Pudahuel', 'Quilicura', 'Quinta Normal', 'Recoleta', 'Renca', 'San Joaquín', 'San Miguel', 'San Ramón', 'Vitacura', 'Puente Alto', 'San Bernardo'] },
+  },
+  ARG: { labels: ['Provincia', 'Departamento'], whole: ['Ciudad Autónoma de Buenos Aires'] },
+  URY: { labels: ['Departamento', 'Municipio'], whole: ['Montevideo'] },
   PRY: { labels: ['Departamento', 'Distrito'] },
   BRA: {
     labels: ['Estado', 'Municipio'],
@@ -87,7 +99,40 @@ const COUNTRIES = {
   FRA: { labels: ['Región', 'Departamento'] },
   ITA: { adm1: 'ADM2', city: 'ADM3', labels: ['Región', 'Provincia'] },
   DEU: { labels: ['Estado', 'Distrito'] },
-  PRT: { labels: ['Distrito', 'Municipio'] },
+  PRT: {
+    labels: ['Distrito', 'Municipio'],
+    // La fuente trae los distritos en mayusculas.
+    names: {
+      'Região Autónoma da Madeira': 'Madeira', 'Região Autónoma dos Açores': 'Azores', AVEIRO: 'Aveiro', BEJA: 'Beja',
+      BRAGA: 'Braga', BRAGANÇA: 'Bragança', 'CASTELO BRANCO': 'Castelo Branco', COIMBRA: 'Coimbra', ÉVORA: 'Évora',
+      FARO: 'Faro', GUARDA: 'Guarda', LEIRIA: 'Leiria', LISBOA: 'Lisboa', PORTALEGRE: 'Portalegre', PORTO: 'Porto',
+      SANTARÉM: 'Santarém', SETÚBAL: 'Setúbal', 'VIANA DO CASTELO': 'Viana do Castelo', 'VILA REAL': 'Vila Real',
+      VISEU: 'Viseu',
+    },
+  },
+  GBR: { merge: { London: ['City of London', 'Westminster', 'Barking and Dagenham', 'Barnet', 'Bexley', 'Brent', 'Bromley', 'Camden', 'Croydon', 'Ealing', 'Enfield', 'Greenwich', 'Hackney', 'Hammersmith and Fulham', 'Haringey', 'Harrow', 'Havering', 'Hillingdon', 'Hounslow', 'Islington', 'Kensington and Chelsea', 'Kingston upon Thames', 'Lambeth', 'Lewisham', 'Merton', 'Newham', 'Redbridge', 'Richmond upon Thames', 'Southwark', 'Sutton', 'Tower Hamlets', 'Waltham Forest', 'Wandsworth'] } },
+  // Budapest no viene como departamento: sus 23 distritos caen en Pest.
+  HUN: { merge: { Budapest: ['I. kerület', 'II. kerület', 'III. kerület', 'IV. kerület', 'V. kerület', 'VI. kerület', 'VII. kerület', 'VIII. kerület', 'IX. kerület', 'X. kerület', 'XI. kerület', 'XII. kerület', 'XIII. kerület', 'XIV. kerület', 'XV. kerület', 'XVI. kerület', 'XVII. kerület', 'XVIII. kerület', 'XIX. kerület', 'XX. kerület', 'XXI. kerület', 'XXII. kerület', 'XXIII. kerület'] } },
+  KOR: { whole: ['Seoul', 'Busan', 'Daegu', 'Incheon', 'Gwangju', 'Daejeon', 'Ulsan'] },
+  JPN: { whole: ['Tokyo'] },
+  THA: { whole: ['Bangkok'] },
+  IDN: { whole: ['Jakarta Special Capital Region'] },
+  IND: { whole: ['Delhi'] },
+  IRQ: { whole: ['Baghdad'] },
+  JAM: { whole: ['Kingston'] },
+  KEN: { whole: ['Nairobi'] },
+  KWT: { whole: '*' },
+  QAT: { whole: ['Doha'] },
+  ROU: { names: { BUCURESTI: 'București' }, whole: ['București'] },
+  SOM: { whole: ['Banadir'] },
+  TUN: { whole: ['Tunis'] },
+  TWN: { whole: ['Taipei'] },
+  UZB: { whole: ['Tashkent'] },
+  VNM: { whole: ['Ho Chi Minh'] },
+  YEM: { whole: ['Sanʿaʾ', '‘Adan Governorate'] },
+  EGY: { whole: ['Cairo Governorate', 'Alexandria Governorate'] },
+  SEN: { whole: ['Dakar'] },
+  GMB: { whole: ['Kanifing'] },
 };
 const DEFAULT_LABELS = ['Región', 'Ciudad'];
 
@@ -114,10 +159,19 @@ let lakesFile = null;
 // "El Viejo (Municipio)", "Municipio de Jinotega", "Matagalpa (Departemento)": la
 // fuente mezcla el tipo de division con el nombre, y a veces con faltas.
 const KIND = '(?:municipio|muncipio|departamento|departemento|provincia|region|región|comuna|canton|cantón)';
+// Algunos paises vienen con el UTF-8 leido como latin1 ("RegiÃ³n de ValparaÃ­so").
+// Si al deshacerlo queda un texto valido, era eso; si no (un "Ângulo" de verdad),
+// se deja como venia.
+function fixMojibake(s) {
+  if (!/[ÃÂ][\u0080-\u00ff]/.test(s)) return s;
+  const fixed = Buffer.from(s, 'latin1').toString('utf8');
+  return fixed.includes('\ufffd') ? s : fixed;
+}
+
 function cleanName(raw, fixes) {
-  const name = String(raw ?? '')
+  const name = fixMojibake(String(raw ?? ''))
     .replace(new RegExp(`\\s*\\(${KIND}\\)\\s*$`, 'i'), '')
-    .replace(new RegExp(`^${KIND}\\s+(?:de\\s+)?`, 'i'), '')
+    .replace(new RegExp(`^${KIND}\\s+(?:del?\\s+)?`, 'i'), '')
     .trim();
   return fixes[name] ?? name;
 }
@@ -257,10 +311,18 @@ async function buildCountry(src, cfg, cat) {
     );
     const cityLabel = await withLabelPoints(cityTmp);
     const seen = new Set();
+    // Los departamentos que son una ciudad no se parten (ver whole arriba).
+    const whole = new Set(
+      cfg.whole === '*' ? adm1.map((f) => f.properties.id) : adm1.filter((f) => cfg.whole?.includes(f.properties.name)).map((f) => f.properties.id),
+    );
+    if (cfg.whole && cfg.whole !== '*' && whole.size !== cfg.whole.length) {
+      console.warn(`  ${src}: whole no encontro todos: ${cfg.whole.join(', ')}`);
+    }
     for (const f of await readFeatures(cityTmp)) {
       if (!f.geometry) continue;
       const parent = adm1Id.get(f.properties.p_gbid);
       if (!parent) continue; // cae fuera de todo departamento: islas lejanas, aguas
+      if (whole.has(parent)) continue;
       const name = cleanName(f.properties.name, fixes);
       const id = uniqueId(`${parent}.${slug(name)}`, seen);
       const [lx, ly] = cityLabel.get(f.properties.gbid) ?? [null, null];
@@ -269,6 +331,35 @@ async function buildCountry(src, cfg, cat) {
       byParent.get(parent).push(f);
       cityCount++;
     }
+  }
+
+  // Una ciudad partida en varias (Santiago en sus comunas): se funden en una,
+  // con el contorno de afuera (mapshaper -dissolve) y su punto para el nombre.
+  for (const [name, members] of Object.entries(cfg.merge ?? {})) {
+    const want = new Set(members);
+    let found = 0;
+    for (const [parent, list] of byParent) {
+      const parts = list.filter((f) => want.has(f.properties.name));
+      if (parts.length < 2) continue;
+      found += parts.length;
+      const out = await mapshaper.applyCommands('-i in.json -dissolve -o out.json format=geojson precision=0.0001', {
+        'in.json': { type: 'FeatureCollection', features: parts.map((f) => ({ type: 'Feature', geometry: f.geometry, properties: {} })) },
+      });
+      // Sin atributos, mapshaper devuelve una GeometryCollection, no features.
+      const firstGeometry = (o) => {
+        const j = JSON.parse(String(o['out.json']));
+        return j.features?.[0]?.geometry ?? j.geometries?.[0] ?? null;
+      };
+      const geometry = firstGeometry(out);
+      const pt = await mapshaper.applyCommands('-i in.json -points inner -o out.json format=geojson precision=0.0001', {
+        'in.json': { type: 'FeatureCollection', features: [{ type: 'Feature', geometry, properties: {} }] },
+      });
+      const [lx, ly] = firstGeometry(pt)?.coordinates ?? [null, null];
+      const rest = list.filter((f) => !want.has(f.properties.name));
+      byParent.set(parent, [...rest, { type: 'Feature', geometry, properties: { id: `${parent}.${slug(name)}`, name, parent, lx, ly } }]);
+      cityCount -= parts.length - 1;
+    }
+    if (found < members.length) console.warn(`  ${src}: merge ${name} junto ${found} de ${members.length}`);
   }
 
   for (const f of adm1) {
