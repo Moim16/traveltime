@@ -50,6 +50,19 @@ async function initSchema() {
     )`);
   await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_name ON users (name COLLATE NOCASE)');
   await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email COLLATE NOCASE) WHERE email IS NOT NULL');
+  // Entrar con Google: googleSub es el id estable de la cuenta de Google (el
+  // correo puede cambiar, el sub no). emailVerified: 1 si el correo se confirmo
+  // (codigo por correo, o Google). Una cuenta de Google solo se une sola a una
+  // existente si el correo de esa cuenta estaba verificado: si no, alguien que
+  // se registro con un correo ajeno se quedaria con la cuenta de su dueño.
+  for (const col of ['googleSub TEXT', 'emailVerified INTEGER NOT NULL DEFAULT 0']) {
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN ${col}`);
+    } catch {
+      /* ya existe */
+    }
+  }
+  await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google ON users (googleSub) WHERE googleSub IS NOT NULL');
 
   // Una sesion por dispositivo: entrar desde el telefono no cierra la del
   // computador (en deudas si, porque el token vivia en la fila del usuario).

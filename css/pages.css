@@ -227,6 +227,18 @@ a.card { text-decoration: none; color: inherit; }
 .tl-body span { color: var(--muted); font-size: 13.5px; }
 .trip-link { color: #fff; font-weight: 650; }
 
+/* Entrar con Google */
+.google-block { margin: 4px 0 14px; }
+.google-block[hidden] { display: none; }
+.g-btn { display: flex; justify-content: center; min-height: 44px; }
+.g-note { text-align: center; margin: 8px 0 0; }
+.or { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; color: var(--muted); font-size: 12.5px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.link-google { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.link-google .g-btn { justify-content: flex-start; }
+.g-linked { color: #059669; }
+.g-error { margin-top: 10px; }
+
 /* Compañeros de viaje */
 .members { margin: 0 0 28px; }
 .members h2 { font-size: 18px; margin: 0 0 10px; }

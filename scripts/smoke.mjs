@@ -17,10 +17,16 @@ Object.assign(process.env, {
   CF_ACCOUNT_HASH: 'hashDePrueba',
   CF_IMAGES_TOKEN: 'token-de-prueba',
   CF_IMAGES_SIGNING_KEY: 'clave-de-firma-de-prueba',
+  GOOGLE_CLIENT_ID: 'cliente-de-prueba.apps.googleusercontent.com',
 });
+// Las claves publicas del Google de mentira (las llena la seccion de Google).
+const googleJwks = { keys: [] };
 const cf = { next: 0, uploaded: new Set(), deleted: [], created: [] };
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
+  if (u === 'https://www.googleapis.com/oauth2/v3/certs') {
+    return { ok: true, status: 200, headers: { get: () => 'public, max-age=3600' }, json: async () => ({ keys: googleJwks.keys }) };
+  }
   const ok = (result) => ({ status: 200, json: async () => ({ success: true, result }) });
   if (u.endsWith('/images/v2/direct_upload')) {
     const id = `cf-${++cf.next}`;
@@ -456,6 +462,64 @@ check('...pero no la de quien la cambio', (await call('auth', 'GET', { token: A3
 
 check('cerrar sesion', (await call('auth', 'POST', { token: A3, query: { logout: 1 } })).status === 200);
 check('la sesion cerrada ya no sirve', (await call('auth', 'GET', { token: A3 })).status === 401);
+
+// ---------------------------------------------------------------- entrar con Google
+// Un Google de mentira: un par de claves RSA propio y su JWKS servido por el fetch de prueba.
+const gkeys = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const gjwk = { ...gkeys.publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256', use: 'sig' };
+googleJwks.keys = [gjwk];
+const gtoken = (claims, { key = gkeys.privateKey, kid = 'k1', alg = 'RS256' } = {}) => {
+  const now = Math.floor(Date.now() / 1000);
+  const h = Buffer.from(JSON.stringify({ alg, kid, typ: 'JWT' })).toString('base64url');
+  const p = Buffer.from(JSON.stringify({ iss: 'https://accounts.google.com', aud: 'cliente-de-prueba.apps.googleusercontent.com', iat: now, exp: now + 3600, email_verified: true, ...claims })).toString('base64url');
+  const s = crypto.sign('RSA-SHA256', Buffer.from(`${h}.${p}`), key).toString('base64url');
+  return `${h}.${p}.${s}`;
+};
+const gcall = (claims, opts, extra = {}) => call('auth', 'POST', { query: { google: 1, ...extra.query }, body: { credential: gtoken(claims, opts) }, token: extra.token });
+
+const cfg = await call('auth', 'GET', { query: { config: 1 } });
+check('la config publica trae el id de cliente de Google', cfg.status === 200 && cfg.data.googleClientId === 'cliente-de-prueba.apps.googleusercontent.com', cfg.data);
+
+const g1 = await gcall({ sub: 'g-111', email: 'Rosa.Pérez@gmail.com', name: 'Rosa Pérez' });
+check('entrar con Google crea la cuenta', g1.status === 201 && g1.data.token && g1.data.user.email === 'rosa.pérez@gmail.com', g1.data);
+check('el usuario sale del correo, sin tildes', g1.data.user.name === 'rosa.perez', g1.data.user.name);
+check('con Google no hay codigo de recuperacion', !('recovery' in g1.data));
+const g2 = await gcall({ sub: 'g-111', email: 'rosa.perez@gmail.com' });
+check('la segunda vez entra a la misma cuenta', g2.status === 200 && g2.data.user.id === g1.data.user.id, g2.data);
+const g3 = await gcall({ sub: 'g-222', email: 'rosa.perez@otro.com' });
+check('otro con el mismo comienzo de correo recibe otro usuario', g3.data.user?.name === 'rosa.perez2', g3.data.user);
+const meG = await call('auth', 'GET', { token: g1.data.token });
+check('la cuenta de Google se ve como tal', meG.data.me.hasGoogle === true && meG.data.me.hasPassword === false, meG.data.me);
+check('una cuenta de Google no entra con contraseña vacia',
+  (await call('auth', 'POST', { body: { name: 'rosa.perez', password: '' } })).status === 401 &&
+  (await call('auth', 'POST', { body: { name: 'rosa.perez', password: 'cualquiera1' } })).status === 401);
+
+check('token de otra app (aud)', (await gcall({ sub: 'g-x', email: 'x@gmail.com', aud: 'otra-app' })).status === 401);
+check('token vencido', (await gcall({ sub: 'g-x', email: 'x@gmail.com', exp: Math.floor(Date.now() / 1000) - 3600 })).status === 401);
+check('token de otro emisor', (await gcall({ sub: 'g-x', email: 'x@gmail.com', iss: 'https://malo.com' })).status === 401);
+check('correo sin verificar por Google', (await gcall({ sub: 'g-x', email: 'x@gmail.com', email_verified: false })).status === 401);
+const otherKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
+check('firma falsa', (await gcall({ sub: 'g-x', email: 'x@gmail.com' }, { key: otherKey })).status === 401);
+check('alg none no pasa', (await call('auth', 'POST', { query: { google: 1 }, body: { credential: gtoken({ sub: 'g-x', email: 'x@gmail.com' }, { alg: 'none' }) } })).status === 401);
+check('basura', (await call('auth', 'POST', { query: { google: 1 }, body: { credential: 'no.es.jwt' } })).status === 401);
+
+// La cuenta "otra" se registro con contraseña y SIN confirmar el correo: si
+// alguien entra con Google con ese correo, no se une sola (podria ser de otro).
+await db.execute({ sql: "UPDATE users SET email = 'otra@gmail.com' WHERE name = 'otra'" });
+const pre = await gcall({ sub: 'g-333', email: 'otra@gmail.com' });
+check('correo de una cuenta sin verificar: no se une solo (409)', pre.status === 409 && /contraseña/.test(pre.data.error), pre.data);
+// Si estaba verificado (confirmo el codigo por correo), si se une.
+await db.execute({ sql: "UPDATE users SET emailVerified = 1 WHERE name = 'otra'" });
+const join = await gcall({ sub: 'g-333', email: 'otra@gmail.com' });
+check('correo verificado: entra a esa cuenta y queda conectada', join.status === 200 && join.data.user.name === 'otra', join.data);
+
+// Conectar Google desde la cuenta, con sesion.
+const linkSession = (await call('auth', 'POST', { body: { name: 'moises', password: 'otraclave3' } })).data.token;
+check('conectar Google exige sesion', (await gcall({ sub: 'g-444', email: 'moises@gmail.com' }, undefined, { query: { link: 1 } })).status === 401);
+check('no se conecta una cuenta de Google que ya es de otro', (await gcall({ sub: 'g-111', email: 'rosa.perez@gmail.com' }, undefined, { query: { link: 1 }, token: linkSession })).status === 409);
+check('conectar Google a mi cuenta', (await gcall({ sub: 'g-444', email: 'moises@gmail.com' }, undefined, { query: { link: 1 }, token: linkSession })).status === 200);
+const viaG = await gcall({ sub: 'g-444', email: 'moises@gmail.com' });
+check('despues entro con Google a mi misma cuenta', viaG.data.user?.name === 'moises', viaG.data);
 
 console.log(`${passed} pruebas bien${failures.length ? `, ${failures.length} mal:\n${failures.join('\n')}` : ''}`);
 process.exit(failures.length ? 1 : 0);
