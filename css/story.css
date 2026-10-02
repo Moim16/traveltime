@@ -189,3 +189,31 @@ mark[data-color="violet"] { background: color-mix(in srgb, var(--c-violet) 24%, 
 .tt-palette button:hover { border-color: var(--accent); }
 .tt-palette [data-clear] { color: var(--muted); }
 .codex-editor mark:not([data-color]), .tt-palette mark:not([data-color]) { background: color-mix(in srgb, var(--accent-2) 35%, transparent); color: inherit; padding: 0 2px; border-radius: 3px; }
+
+/* ---------- Escríbelo por mí (js/editor.js openAiDraft) ---------- */
+.ai-btn { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--c-violet) 16%, transparent)); border-color: color-mix(in srgb, var(--c-violet) 35%, var(--line)); font-weight: 700; }
+.modal:has(.ai-draft) { width: min(520px, 100%); }
+.ai-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; }
+.ai-head h2 { margin: 2px 0 4px; }
+.ai-spark {
+  flex: none; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; font-size: 22px;
+  background: linear-gradient(135deg, var(--accent), var(--c-violet)); box-shadow: 0 10px 24px color-mix(in srgb, var(--c-violet) 30%, transparent);
+}
+.ai-draft .field textarea { min-height: 84px; }
+.ai-tones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ai-tones button { text-align: left; padding: 10px; border-radius: 14px; border: 1px solid var(--line); background: var(--card-solid); color: var(--ink); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.ai-tones button small { color: var(--muted); font-size: 11.5px; line-height: 1.3; }
+.ai-tones .on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+@media (max-width: 480px) { .ai-tones { grid-template-columns: 1fr; } }
+.ai-working { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px 0 6px; color: var(--muted); }
+.ai-working[hidden] { display: none; }
+/* Una esfera de colores que respira mientras Claude escribe. */
+.ai-orb {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: conic-gradient(from 0deg, var(--accent), var(--c-amber), var(--c-violet), var(--c-blue), var(--accent));
+  filter: blur(1px); animation: ai-spin 1.6s linear infinite, ai-breathe 1.6s ease-in-out infinite;
+}
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@keyframes ai-breathe { 50% { scale: 0.86; opacity: 0.8; } }
+@media (prefers-reduced-motion: reduce) { .ai-orb { animation: none; } }
+.ai-draft .actions[hidden] { display: none; }

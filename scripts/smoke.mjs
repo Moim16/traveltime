@@ -23,10 +23,17 @@ Object.assign(process.env, {
 // Las claves publicas del Google de mentira (las llena la seccion de Google).
 const googleJwks = { keys: [] };
 const cf = { next: 0, uploaded: new Set(), deleted: [], created: [] };
+// Claude de mentira: devuelve claude.reply y guarda lo que se le mando.
+const claude = { reply: null, last: null, fail: false };
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
   if (u === 'https://www.googleapis.com/oauth2/v3/certs') {
     return { ok: true, status: 200, headers: { get: () => 'public, max-age=3600' }, json: async () => ({ keys: googleJwks.keys }) };
+  }
+  if (u === 'https://api.anthropic.com/v1/messages') {
+    claude.last = JSON.parse(opts.body);
+    if (claude.fail) return { ok: false, status: 529, json: async () => ({ error: { message: 'sobrecargado' } }) };
+    return { ok: true, status: 200, json: async () => claude.reply };
   }
   const ok = (result) => ({ status: 200, json: async () => ({ success: true, result }) });
   if (u.endsWith('/images/v2/direct_upload')) {
@@ -52,6 +59,7 @@ const handlers = {
   public: (await import('../api/public.js')).default,
   wishes: (await import('../api/wishes.js')).default,
   trips: (await import('../api/trips.js')).default,
+  story: (await import('../api/story.js')).default,
 };
 const { db } = await import('../api/_lib/db.js');
 const crypto = await import('node:crypto');
@@ -599,6 +607,64 @@ check('el login trae el avatar', (await gcall({ sub: 'g-444', email: 'moises@gma
     !('email' in pp.data.profile) && !('id' in pp.data.profile) && !('visits' in pp.data.profile.stats) && !('wishes' in pp.data.profile.stats), pp.data.profile);
   check('el perfil publico solo lista lo publicado', pp.data.visits.every((v) => v.author === 'moises') && pp.data.profile.stats.published === pp.data.visits.length, pp.data);
   check('un viajero que no existe: 404', (await call('public', 'GET', { query: { user: 'nadie-asi' } })).status === 404);
+}
+
+// ---------- Escríbelo por mí (Claude de mentira) ----------
+{
+  // Sesiones nuevas: las de arriba se cerraron al cambiar la contraseña.
+  const A = (await gcall({ sub: 'g-444', email: 'moises@gmail.com' })).data.token;
+  const B = (await gcall({ sub: 'g-111', email: 'rosa.perez@gmail.com' })).data.token;
+  const noKey = await call('story', 'POST', { token: A, query: { visit: 1 }, body: {} });
+  check('sin clave de Claude: 503', noKey.status === 503, noKey.data);
+  process.env.ANTHROPIC_API_KEY = 'clave-de-prueba';
+
+  const vs = await call('visits', 'POST', { token: A, body: { placeId: 'NIC.masaya.masaya', placeName: 'Masaya, Masaya, Nicaragua', title: 'Volcán y mercado', startDay: '2025-03-01' } });
+  const VS = vs.data.visit.id;
+  const up = await call('photos', 'POST', { token: A, query: { upload: 1 }, body: { visitId: VS, width: 800, height: 600, takenAt: '2025:03:01 17:40:00' } });
+  cf.uploaded.add(cf.created.at(-1).id);
+  await call('photos', 'POST', { token: A, query: { confirm: 1, id: up.data.photo.id } });
+  const pin = await call('pins', 'POST', { token: A, body: { visitId: VS, name: 'Mirador del cráter', kind: 'see', lat: 11.98, lng: -86.16, note: 'Ir al atardecer' } });
+  const P = up.data.photo.id;
+  const PIN = pin.data.pin.id;
+
+  claude.reply = {
+    content: [{
+      type: 'tool_use', name: 'escribir_relato',
+      input: { blocks: [
+        { type: 'header', level: 2, text: 'Fuego al atardecer' },
+        { type: 'paragraph', text: 'Llegué al <b>cráter</b> justo a tiempo.<script>alert(1)</script>' },
+        { type: 'photo', photoId: P, caption: 'La lava al fondo' },
+        { type: 'photo', photoId: P, caption: 'repetida' },
+        { type: 'photo', photoId: 999999, caption: 'de otra persona' },
+        { type: 'place', pinId: PIN },
+        { type: 'place', pinId: 999999 },
+        { type: 'callout', emoji: '💡', text: 'Ir al atardecer' },
+        { type: 'inventado', text: 'x' },
+      ] },
+    }],
+  };
+  const st = await call('story', 'GET', { token: A });
+  check('la IA esta disponible y quedan los del dia', st.data.ready === true && st.data.left === 15, st.data);
+  const d = await call('story', 'POST', { token: A, query: { visit: VS }, body: { notes: 'Fuimos con mi hermana', tone: 'poetico' } });
+  const types = (d.data.blocks ?? []).map((b) => b.type).join(',');
+  check('el borrador vuelve como bloques del editor', d.status === 200 && types === 'header,paragraph,photo,place,callout', d.data);
+  check('lo que escribio Claude se limpia como cualquier relato', !/script/.test(JSON.stringify(d.data.blocks)) && d.data.blocks[1].data.text.includes('<b>cráter</b>'));
+  check('solo fotos y lugares de esta visita, sin repetir', d.data.blocks.filter((b) => b.type === 'photo').length === 1 && d.data.blocks[3].data.pinId === PIN);
+  check('cuenta el uso', d.data.left === 14, d.data);
+  const sent = claude.last;
+  const text = sent.messages[0].content.find((c) => c.type === 'text').text;
+  check('Claude recibe el lugar, el lugar marcado, las notas y el tono', /Masaya/.test(text) && /Mirador del cráter/.test(text) && /hermana/.test(text) && /sensorial/.test(text), text);
+  check('Claude mira la foto (URL firmada) y responde por la herramienta',
+    sent.messages[0].content.some((c) => c.type === 'image' && /imagedelivery\.net/.test(c.source.url)) && sent.tool_choice?.name === 'escribir_relato');
+  check('una visita ajena: 404', (await call('story', 'POST', { token: B, query: { visit: VS }, body: {} })).status === 404);
+
+  claude.fail = true;
+  const bad = await call('story', 'POST', { token: A, query: { visit: VS }, body: {} });
+  claude.fail = false;
+  check('si Claude falla: 502 y el intento no cuenta', bad.status === 502 && (await call('story', 'GET', { token: A })).data.left === 14, bad.data);
+  await db.execute({ sql: "UPDATE ai_usage SET n = 15 WHERE userId = (SELECT userId FROM visits WHERE id = ?)", args: [VS] });
+  check('con el cupo del dia usado: 429', (await call('story', 'POST', { token: A, query: { visit: VS }, body: {} })).status === 429);
+  delete process.env.ANTHROPIC_API_KEY;
 }
 
 console.log(`${passed} pruebas bien${failures.length ? `, ${failures.length} mal:\n${failures.join('\n')}` : ''}`);

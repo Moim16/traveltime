@@ -243,6 +243,15 @@ async function initSchema() {
       PRIMARY KEY (tripId, userId)
     )`);
   await db.execute('CREATE INDEX IF NOT EXISTS idx_trip_members_user ON trip_members (userId, status)');
+
+  // Cuantos borradores con IA pidio cada persona cada dia (api/story.js).
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS ai_usage (
+      userId INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      day    TEXT NOT NULL,
+      n      INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (userId, day)
+    )`);
 }
 
 // Alfabeto sin caracteres que se confundan (nada de I, O, 0, 1).

@@ -7,9 +7,10 @@
 //
 // Editor.js pesa ~500 KB: se carga la primera vez que se abre, no con la app.
 
-import { esc, toast, ask } from './ui.js';
+import { esc, toast, ask, modal as openModal } from './ui.js';
 import { kindOf } from './pins.js';
 import { ColorTool, AlignTune, toEditor, fromEditor } from './editor-tools.js';
+import { api } from './api.js';
 
 const V = '/vendor/editorjs';
 let libs = null;
@@ -271,6 +272,7 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
     <header class="writer-bar">
       <button class="link" data-w-close>← Volver</button>
       <span class="writer-status" aria-live="polite"></span>
+      <button class="secondary ai-btn" data-w-ai hidden>✨ Escríbelo por mí</button>
       <button class="primary" data-w-save>Guardar</button>
     </header>
     <div class="writer-scroll"><article class="writer-page">
@@ -435,6 +437,15 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
   addEventListener('keydown', onKey);
   addEventListener('beforeunload', onUnload);
   root.querySelector('[data-w-save]').addEventListener('click', doSave);
+
+  // ---------- Escríbelo por mí ----------
+  // Claude mira las fotos y los lugares de la visita y escribe un borrador. No se
+  // guarda solo: entra al editor y la persona decide.
+  const aiBtn = root.querySelector('[data-w-ai]');
+  api('story')
+    .then((r) => (aiBtn.hidden = !r.ready))
+    .catch(() => {});
+  aiBtn.addEventListener('click', () => openAiDraft({ visit, photos: photos(), pins: pins(), editor, markDirty, status }));
   root.querySelector('[data-w-close]').addEventListener('click', close);
   open = { close, teardown, isDirty: () => dirty };
 }
@@ -447,4 +458,82 @@ export function closeWriter(force = false) {
   if (open.isDirty() && !force) return false;
   open.teardown();
   return true;
+}
+
+// ---------- Escríbelo por mí: la ventana ----------
+
+const TONES = [
+  ['cercano', '😊 Cercano', 'Como contándoselo a un amigo'],
+  ['guia', '🧭 Guía práctica', 'Para quien quiera ir: qué ver, consejos'],
+  ['poetico', '🌅 Evocador', 'Luz, olores, sonidos'],
+];
+
+async function openAiDraft({ visit, photos, pins, editor, markDirty, status }) {
+  const nPhotos = Math.min(photos.length, 10);
+  const { root, close } = openModal(
+    `<div class="ai-draft">
+      <div class="ai-head"><span class="ai-spark" aria-hidden="true">✨</span><div><h2>Escríbelo por mí</h2>
+      <p class="note">Claude mira ${nPhotos ? (nPhotos === 1 ? 'tu foto' : `tus ${nPhotos} fotos`) : 'la visita'}${pins.length ? (pins.length === 1 ? ' y el lugar que marcaste' : ` y los ${pins.length} lugares que marcaste`) : ''}, y escribe un borrador en primera persona. No inventa lo que no está: tú lo editas después.</p></div></div>
+      <label class="field"><span>¿Algo que quieras que diga? (opcional)</span>
+        <textarea name="notes" rows="3" maxlength="2000" placeholder="Fuimos con mi hermana; lo mejor fue el mirador al atardecer; el mercado estaba lleno…"></textarea></label>
+      <p class="profile-label">Tono</p>
+      <div class="ai-tones" role="radiogroup">${TONES.map(([k, t, d], i) => `<button type="button" data-tone="${k}" class="${i === 0 ? 'on' : ''}"><b>${t}</b><small>${d}</small></button>`).join('')}</div>
+      <p class="form-error" hidden></p>
+      <div class="actions"><button class="secondary" data-close>Cancelar</button><button class="primary" data-ai-go>✨ Escribir borrador</button></div>
+      <div class="ai-working" hidden><div class="ai-orb"></div><p>Mirando tus fotos y escribiendo…</p></div>
+    </div>`,
+    { label: 'Escríbelo por mí' },
+  );
+  let tone = 'cercano';
+  root.querySelectorAll('[data-tone]').forEach((b) =>
+    b.addEventListener('click', () => {
+      tone = b.dataset.tone;
+      root.querySelectorAll('[data-tone]').forEach((x) => x.classList.toggle('on', x === b));
+    }),
+  );
+  const err = root.querySelector('.form-error');
+  root.querySelector('[data-ai-go]').addEventListener('click', async () => {
+    err.hidden = true;
+    const working = root.querySelector('.ai-working');
+    working.hidden = false;
+    root.querySelector('.actions').hidden = true;
+    try {
+      const r = await api('story', { method: 'POST', query: { visit: visit.id }, body: { notes: root.querySelector('[name=notes]').value, tone } });
+      const current = await editor.save();
+      const blocks = toEditor(r.blocks);
+      // Sin relato todavia: entra directo. Con relato: se pregunta, no se pisa.
+      let how = 'replace';
+      if (current.blocks.length) {
+        close();
+        how = await chooseHow();
+        if (!how) return;
+      } else close();
+      if (how === 'replace') await editor.render({ blocks });
+      else for (const b of blocks) editor.blocks.insert(b.type, b.data, undefined, undefined, false, false);
+      markDirty();
+      status.textContent = `Borrador de Claude · sin guardar${r.left != null ? ` · te quedan ${r.left} hoy` : ''}`;
+      toast('Listo: revísalo y cámbialo a tu gusto ✍️');
+    } catch (ex) {
+      working.hidden = true;
+      root.querySelector('.actions').hidden = false;
+      err.textContent = ex.message;
+      err.hidden = false;
+    }
+  });
+}
+
+function chooseHow() {
+  return new Promise((resolve) => {
+    const { root, close } = openModal(
+      `<h2>Ya tienes un relato</h2><p class="note">¿Qué hago con el borrador?</p>
+       <div class="actions"><button class="secondary" data-how="">Cancelar</button><button class="secondary" data-how="append">Agregarlo al final</button><button class="primary" data-how="replace">Reemplazar el mío</button></div>`,
+      { label: 'Borrador', onClose: () => resolve(null) },
+    );
+    root.querySelectorAll('[data-how]').forEach((b) =>
+      b.addEventListener('click', () => {
+        resolve(b.dataset.how || null);
+        close();
+      }),
+    );
+  });
 }
