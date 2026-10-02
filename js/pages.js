@@ -23,7 +23,12 @@ export function closePage() {
   document.body.classList.remove('on-page');
 }
 
-function openPage(className) {
+// Lo que hay que apagar al salir de la pagina abierta (timers, teclas).
+export const onLeave = (fn) => {
+  if (page) page.cleanup = fn;
+};
+
+export function openPage(className) {
   closePage();
   const el = document.createElement('div');
   el.className = `page ${className}`;
@@ -34,7 +39,7 @@ function openPage(className) {
 }
 
 // Aparecer al entrar en pantalla, de a uno (cada .reveal con --i para escalonar).
-function reveal(root) {
+export function reveal(root) {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) {
     root.querySelectorAll('.reveal').forEach((n) => n.classList.add('in'));
     return null;
@@ -168,7 +173,7 @@ export async function renderHome({ go, countVisited, wishes, invites = () => [] 
     ${me ? `<section class="band mine reveal"><div class="wrap mine-row">
       <div><p class="eyebrow">Tu mapa</p><h2>Hola, ${esc(me.fullName || me.name)}</h2></div>
       <div class="mine-stats"><div><b>${countVisited()}</b><span>países visitados</span></div><div><b id="home-wish-count">${wishes().length}</b><span>quiero ir</span></div></div>
-      <a class="secondary" href="#/mundo">Ver mi mapa →</a>
+      <div class="mine-links"><a class="wrapped-btn" href="#/anio">🎆 Tu año en viajes</a><a class="secondary" href="#/mundo">Ver mi mapa →</a></div>
     </div>${invites().length ? `<div class="wrap">${invitesHtml(invites())}</div>` : ''}</section>` : ''}
 
     <section class="band" id="como"><div class="wrap">
@@ -679,7 +684,7 @@ export async function renderProfile(name, { go }) {
         <div class="pf-stats">${stats.map(([n, l], i) => `<div class="reveal" style="--i:${i}"><b data-count="${Number(n) || 0}">0</b><span>${l}</span></div>`).join('')}</div>
         ${p.verified ? '<p class="pf-badge">🛡️ Identidad confirmada con Google</p>' : ''}
         ${mine ? '<p class="note pf-private">Las cifras de visitas, fotos y "quiero ir" solo las ves tú. Tu perfil público muestra lo que publicas y tu "Sobre mí".</p>' : ''}
-        ${mine ? `<a class="link" href="#/u/${esc(p.name)}">Ver cómo lo ven los demás →</a>` : ''}
+        ${mine ? `<a class="wrapped-btn" href="#/anio">🎆 Tu año en viajes</a><a class="link" href="#/u/${esc(p.name)}">Ver cómo lo ven los demás →</a>` : ''}
       </aside>
       <section class="pf-main">
         <p class="eyebrow reveal">Sobre ${mine ? 'mí' : esc(display.split(' ')[0])}</p>

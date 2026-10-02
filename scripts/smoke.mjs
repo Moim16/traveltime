@@ -666,6 +666,16 @@ check('el login trae el avatar', (await gcall({ sub: 'g-444', email: 'moises@gma
   await db.execute({ sql: "UPDATE ai_usage SET n = 15 WHERE userId = (SELECT userId FROM visits WHERE id = ?)", args: [VS] });
   check('con el cupo del dia usado: 429', (await call('story', 'POST', { token: A, query: { visit: VS }, body: {} })).status === 429);
   delete process.env.ANTHROPIC_API_KEY;
+
+  // Tu año en viajes: la visita de Masaya (marzo de 2025), con su foto y su lugar.
+  const w = await call('visits', 'GET', { token: A, query: { wrapped: 2025 } });
+  const W = w.data.wrapped;
+  check('el año en viajes trae las visitas del año en orden', w.status === 200 && W.visits.some((v) => v.id === VS) && W.year === 2025, w.data);
+  check('cuenta paises, fotos, lugares, dias y el mes', W.countries.includes('NIC') && W.photos >= 1 && W.pins >= 1 && W.travelDays >= 1 && W.months[2] >= 1, W);
+  check('los años disponibles', w.data.years.includes(2025), w.data.years);
+  const wb = await call('visits', 'GET', { token: B, query: { wrapped: 2025 } });
+  check('el año de otra persona no trae lo mio', !wb.data.wrapped.visits.some((v) => v.id === VS));
+  check('un año raro: 400', (await call('visits', 'GET', { token: A, query: { wrapped: 99999 } })).status === 400);
 }
 
 console.log(`${passed} pruebas bien${failures.length ? `, ${failures.length} mal:\n${failures.join('\n')}` : ''}`);

@@ -9,6 +9,7 @@ import * as geo from './geo.js';
 import * as visits from './visits.js';
 import * as account from './account.js';
 import { avatarHtml } from './avatar.js';
+import { renderWrapped } from './wrapped.js';
 import { api } from './api.js';
 import { uploadAll } from './photos.js';
 import { KINDS, kindOf, toGeoJSON, pinForm, pinCard } from './pins.js';
@@ -498,12 +499,13 @@ const find = (fc, id) => fc?.features.filter((f) => (f.properties.id ?? f.proper
 
 // "NIC.granada.granada/v/12/editar" -> { place, visit: 12, edit: true }
 //   '#/' portada · '#/mundo' el globo · '#/p/12' una visita publicada
-//   '#/perfil' mi perfil · '#/u/moim16' el perfil publico de alguien
+//   '#/perfil' mi perfil · '#/u/moim16' el perfil publico de alguien · '#/anio/2026' tu año en viajes
 function parseRoute(hash) {
   const [place, v, id, action] = decodeURIComponent(hash.replace(/^#\/?/, '')).split('/');
   if (!place) return { page: 'home' };
   if (place === 'p') return { page: 'public', id: Number(v) || null };
   if (place === 'perfil') return { page: 'profile', name: null };
+  if (place === 'anio') return { page: 'wrapped', year: Number(v) || null };
   if (place === 'u') return { page: 'profile', name: v || null };
   if (place === 'viaje') return { page: 'trip', id: Number(v) || null };
   if (place === 't') return { page: 'publicTrip', id: Number(v) || null };
@@ -549,6 +551,10 @@ async function show(route) {
   spin(false);
   if (route.page === 'public') {
     renderPublicVisit(route.id, { go, openViewer: (photos, i) => openPhoto(i, { photos, readOnly: true }) });
+    return;
+  }
+  if (route.page === 'wrapped') {
+    renderWrapped(route.year, { go });
     return;
   }
   if (route.page === 'profile') {

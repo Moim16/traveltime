@@ -3,6 +3,7 @@
 //  GET    /api/visits?under=NIC        -> { visits } mias en ese lugar o dentro de el,
 //                                         las mas recientes primero (sin el texto)
 //  GET    /api/visits?id=12            -> { visit } con el texto
+//  GET    /api/visits?wrapped=2026     -> { years, wrapped } tu año en viajes (sin año: el mas nuevo)
 //  POST   /api/visits                  { placeId, placeName, title, startDay, endDay, body, fromPinId }
 //                                         fromPinId: "ya estuve" desde una recomendacion; la visita
 //                                         nueva lleva ese lugar (solo nombre, tipo y ubicacion)
@@ -24,6 +25,7 @@ import { imagesReady, signedUrl } from './_lib/images.js';
 import { removePhotos } from './_lib/photos.js';
 import { parseStory, readStory } from './_lib/story.js';
 import { readableVisit } from './_lib/trips.js';
+import { travelYears, yearInTravel } from './_lib/wrapped.js';
 
 const TITLE_MAX = 120;
 
@@ -71,6 +73,14 @@ export default async function handler(req, res) {
     const me = await currentUser(req);
     if (!me) return deny(res);
     const q = req.query ?? {};
+
+    // Tu año en viajes (api/_lib/wrapped.js). Sin año: el mas nuevo con algo.
+    if (req.method === 'GET' && q.wrapped !== undefined) {
+      const years = await travelYears(me.id);
+      const year = Number(q.wrapped) || years[0] || new Date().getUTCFullYear();
+      if (year < 1900 || year > 2200) return res.status(400).json({ error: 'Año inválido.' });
+      return res.status(200).json({ years, wrapped: await yearInTravel(me.id, year) });
+    }
 
     if (req.method === 'GET' && q.id) {
       // Mia, o de un viaje donde soy compañero (de lectura: mine=false).
