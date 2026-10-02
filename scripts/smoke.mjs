@@ -322,7 +322,7 @@ check('la portada trae la recomendacion con autor, portada y conteos',
 check('la portada trae los ultimos lugares', home.data.places.some((p) => p.id === PIN1 && p.author === 'moises'));
 check('la portada trae las ciudades de lo publicado, aunque no tengan pines', home.data.cities?.length === 1 && home.data.cities[0].placeId === 'NIC.granada.granada' && home.data.cities[0].author === 'moises', home.data.cities);
 check('la portada trae cuantos paises', home.data.stats.countries === 1 && home.data.stats.visits === 1, home.data.stats);
-check('la portada se guarda un minuto en el CDN', home.headers['vercel-cdn-cache-control']?.startsWith('max-age=60'), home.headers);
+check('la portada se guarda 20 s en el CDN', home.headers['vercel-cdn-cache-control']?.startsWith('max-age=20'), home.headers);
 check('...pero no en el navegador (si no, una visita despublicada seguia viendose)', home.headers['cache-control'] === 'no-cache', home.headers);
 const nf = await pub({ visit: 99999 });
 check('un 404 publico no se guarda ni en el navegador ni en el CDN (al publicar aparece al tiro)', nf.headers['cache-control'] === 'no-store' && nf.headers['vercel-cdn-cache-control'] === 'no-store', nf.headers);

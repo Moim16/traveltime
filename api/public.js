@@ -66,10 +66,12 @@ export default async function handler(req, res) {
     //  - El navegador NO guarda (no-cache). Con stale-while-revalidate en
     //    Cache-Control, Chrome mostraba una visita ya despublicada hasta 5
     //    minutos mientras revalidaba por detras.
-    //  - El CDN de Vercel si guarda un minuto (Vercel-CDN-Cache-Control solo lo
-    //    lee el CDN y no llega al navegador). Despublicar tarda <= 60 s en el CDN.
+    //  - El CDN de Vercel si guarda 20 s (Vercel-CDN-Cache-Control solo lo lee
+    //    el CDN y no llega al navegador): un cambio se ve en todos lados en
+    //    menos de medio minuto. Quien acaba de cambiar algo lo ve al momento:
+    //    sus lecturas llevan ?fresh= y no pegan en el CDN (js/api.js).
     res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Vercel-CDN-Cache-Control', 'max-age=60, stale-while-revalidate=300');
+    res.setHeader('Vercel-CDN-Cache-Control', 'max-age=20, stale-while-revalidate=10');
 
     if (q.user) {
       const name = String(q.user).slice(0, 40);
