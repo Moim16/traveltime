@@ -2,8 +2,11 @@
 // que hay de ella (fotos, que mira; lugares; fechas; notas de la persona). La
 // persona lo edita despues: es un punto de partida, no el relato final.
 //
-// Se le pide la respuesta por una herramienta con esquema fijo (tool_choice), asi
-// vuelve como bloques del editor y no como texto libre. Despues pasa por la misma
+// Se le pide la respuesta por una herramienta con esquema fijo, asi vuelve como
+// bloques del editor y no como texto libre. No se fuerza con tool_choice: los
+// modelos que piensan antes de responder no lo admiten ("type tool and any are
+// not supported"). Se le pide en las instrucciones, y si igual contesta en
+// texto, se lee el JSON de ahi. Despues pasa por la misma
 // limpieza que cualquier relato (api/_lib/story.js parseStory).
 //
 // Necesita ANTHROPIC_API_KEY. ANTHROPIC_MODEL cambia el modelo.
@@ -152,10 +155,9 @@ export async function draftStory(content) {
     },
     body: JSON.stringify({
       model: MODEL(),
-      max_tokens: 3000,
+      max_tokens: 8000,
       system: SYSTEM,
       tools: [TOOL],
-      tool_choice: { type: 'tool', name: TOOL.name },
       messages: [{ role: 'user', content }],
     }),
   });
@@ -166,6 +168,17 @@ export async function draftStory(content) {
     throw err;
   }
   const use = (j.content ?? []).find((c) => c.type === 'tool_use' && c.name === TOOL.name);
-  if (!use) throw new Error('Claude no entregó el relato.');
-  return use.input?.blocks ?? [];
+  if (use) return use.input?.blocks ?? [];
+  // Contesto en texto: el relato puede venir como JSON adentro.
+  const text = (j.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  const m = text.match(/\{[\s\S]*"blocks"[\s\S]*\}/);
+  if (m) {
+    try {
+      const parsed = JSON.parse(m[0]);
+      if (Array.isArray(parsed.blocks)) return parsed.blocks;
+    } catch {
+      /* no era JSON */
+    }
+  }
+  throw new Error('Claude no entregó el relato.');
 }

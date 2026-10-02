@@ -656,7 +656,7 @@ check('el login trae el avatar', (await gcall({ sub: 'g-444', email: 'moises@gma
   const text = sent.messages[0].content.find((c) => c.type === 'text').text;
   check('Claude recibe el lugar, el lugar marcado, las notas y el tono', /Masaya/.test(text) && /Mirador del cráter/.test(text) && /hermana/.test(text) && /sensorial/.test(text), text);
   check('Claude mira la foto (URL firmada) y responde por la herramienta',
-    sent.messages[0].content.some((c) => c.type === 'image' && /imagedelivery\.net/.test(c.source.url)) && sent.tool_choice?.name === 'escribir_relato');
+    sent.messages[0].content.some((c) => c.type === 'image' && /imagedelivery\.net/.test(c.source.url)) && sent.tools?.[0]?.name === 'escribir_relato' && !sent.tool_choice);
   check('una visita ajena: 404', (await call('story', 'POST', { token: B, query: { visit: VS }, body: {} })).status === 404);
 
   claude.fail = true;
