@@ -151,3 +151,41 @@ body.writing { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .writer { transition: none; }
 }
+
+/* ---------- Colores del texto y del resaltado ----------
+   Solo estos cinco (api/_lib/story.js COLORS), con un tono para cada tema: un
+   color elegido en claro tiene que seguir leyendose en oscuro. Valen en el
+   relato y en el editor. */
+:root {
+  --c-coral: #d93d45; --c-amber: #b45309; --c-green: #047857; --c-blue: #1d4ed8; --c-violet: #6d28d9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --c-coral: #ff7b7b; --c-amber: #fbbf24; --c-green: #34d399; --c-blue: #7aa7ff; --c-violet: #b49cff;
+  }
+}
+:root[data-theme="dark"] {
+  --c-coral: #ff7b7b; --c-amber: #fbbf24; --c-green: #34d399; --c-blue: #7aa7ff; --c-violet: #b49cff;
+}
+span[data-color="coral"] { color: var(--c-coral); }
+span[data-color="amber"] { color: var(--c-amber); }
+span[data-color="green"] { color: var(--c-green); }
+span[data-color="blue"] { color: var(--c-blue); }
+span[data-color="violet"] { color: var(--c-violet); }
+mark[data-color] { color: inherit; padding: 0 2px; border-radius: 3px; }
+mark[data-color="coral"] { background: color-mix(in srgb, var(--c-coral) 24%, transparent); }
+mark[data-color="green"] { background: color-mix(in srgb, var(--c-green) 24%, transparent); }
+mark[data-color="blue"] { background: color-mix(in srgb, var(--c-blue) 24%, transparent); }
+mark[data-color="violet"] { background: color-mix(in srgb, var(--c-violet) 24%, transparent); }
+.story .is-center, .codex-editor .is-center, .codex-editor .is-center * { text-align: center; }
+.story blockquote.is-center { border-left: 0; padding-left: 0; }
+
+/* La paleta de color del editor (js/editor-tools.js ColorTool) */
+.tt-color-btn span { font-weight: 800; text-decoration: underline; text-decoration-color: var(--c-coral); text-decoration-thickness: 3px; }
+.tt-palette { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 8px; width: 206px; }
+.tt-palette[hidden] { display: none; }
+.tt-palette-label { width: 100%; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.tt-palette button { width: 34px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--card-solid); cursor: pointer; font-weight: 800; color: var(--ink); }
+.tt-palette button:hover { border-color: var(--accent); }
+.tt-palette [data-clear] { color: var(--muted); }
+.codex-editor mark:not([data-color]), .tt-palette mark:not([data-color]) { background: color-mix(in srgb, var(--accent-2) 35%, transparent); color: inherit; padding: 0 2px; border-radius: 3px; }

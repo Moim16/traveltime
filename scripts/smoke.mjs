@@ -134,6 +134,19 @@ check('un enlace https queda, sin atributos de mas',
 check('una comilla en el href no rompe el atributo', !/"[^"]*"[^>]*onerror/.test(sanitizeInline(`<a href='https://x.com/"onerror="alert(1)'>x</a>`)), sanitizeInline(`<a href='https://x.com/"onerror="alert(1)'>x</a>`));
 check('negrita y cursiva quedan; strong pasa a b', sanitizeInline('<strong>a</strong> <i>b</i> <mark class="cdx-marker">c</mark>') === '<b>a</b> <i>b</i> <mark>c</mark>');
 check('una etiqueta sin cerrar se cierra', sanitizeInline('<b>sin cerrar') === '<b>sin cerrar</b>');
+check('color de texto de la lista queda', sanitizeInline('<span data-color="coral">rojo</span>') === '<span data-color="coral">rojo</span>');
+check('un color que no es de la lista se va, el texto queda', sanitizeInline('<span data-color="#ff0000">x</span>') === 'x');
+check('un span con estilo libre pierde el estilo', sanitizeInline('<span style="font-size:90px">x</span>') === 'x');
+check('resaltado de color', sanitizeInline('<mark data-color="green">ok</mark>') === '<mark data-color="green">ok</mark>');
+check('el resaltado de siempre sigue igual', sanitizeInline('<mark class="cdx-marker">a</mark>') === '<mark>a</mark>' && sanitizeInline('<mark data-color="amber">a</mark>') === '<mark>a</mark>');
+check('el color no deja meter otros atributos', !/onclick/.test(sanitizeInline('<span data-color="blue" onclick="alert(1)">x</span>')));
+const centered = parseStory({ blocks: [
+  { type: 'header', data: { text: 'Hola', level: 2, align: 'center' } },
+  { type: 'paragraph', data: { text: 'a', align: 'right' } },
+  { type: 'quote', data: { text: 'q', caption: '', align: 'center' } },
+] });
+const cb = JSON.parse(centered.value).blocks;
+check('centrar titulos y citas; otra alineacion no', cb[0].data.align === 'center' && !('align' in cb[1].data) && cb[2].data.align === 'center', cb);
 check('un < suelto se escapa', sanitizeInline('3 < 5 y 7 > 2') === '3 &lt; 5 y 7 &gt; 2');
 
 const doc = parseStory({

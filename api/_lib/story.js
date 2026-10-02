@@ -13,8 +13,15 @@ const MAX_TEXT = 4000; // por bloque
 const MAX_JSON = 300_000;
 
 // Etiquetas que puede llevar el texto de un bloque: lo que ofrece la barra al
-// seleccionar texto. Nada de atributos salvo el href de un enlace.
-const INLINE = new Set(['b', 'strong', 'i', 'em', 'mark', 'a', 'br', 'code', 'u', 's']);
+// seleccionar texto. Nada de atributos salvo el href de un enlace y el color
+// (data-color) de un span (color del texto) o de un mark (resaltado), y solo
+// de la lista: asi se leen bien en tema claro y oscuro (los pinta el CSS).
+const INLINE = new Set(['b', 'strong', 'i', 'em', 'mark', 'a', 'br', 'code', 'u', 's', 'span']);
+export const COLORS = ['coral', 'amber', 'green', 'blue', 'violet'];
+const colorOf = (attrs) => {
+  const c = (attrs.match(/data-color\s*=\s*"([^"]*)"/i) ?? attrs.match(/data-color\s*=\s*'([^']*)'/i) ?? [])[1];
+  return COLORS.includes(c) ? c : null;
+};
 
 const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -54,6 +61,14 @@ export function sanitizeInline(html) {
       const href = safeHref((m[3].match(/href\s*=\s*"([^"]*)"/i) ?? m[3].match(/href\s*=\s*'([^']*)'/i) ?? [])[1]);
       if (!href) continue;
       out += `<a href="${escapeHtml(href).replace(/"/g, '&quot;')}">`;
+    } else if (tag === 'span') {
+      // Un span sin color de la lista no aporta nada: se va (su texto queda).
+      const c = colorOf(m[3]);
+      if (!c) continue;
+      out += `<span data-color="${c}">`;
+    } else if (tag === 'mark') {
+      const c = colorOf(m[3]);
+      out += c && c !== 'amber' ? `<mark data-color="${c}">` : '<mark>';
     } else {
       out += `<${tag}>`;
     }
@@ -83,14 +98,17 @@ function listItems(items, depth = 0) {
 }
 
 // Cada tipo de bloque: como se limpia. Devuelve data, o null para descartar el bloque.
+// Centrado: solo parrafo, titulo y cita, y solo "center" (a la izquierda es lo normal).
+const align = (d) => (d.align === 'center' ? { align: 'center' } : {});
+
 const BLOCKS = {
-  paragraph: (d) => ({ text: text(d.text) }),
-  header: (d) => (text(d.text) ? { text: text(d.text), level: d.level === 3 ? 3 : 2 } : null),
+  paragraph: (d) => ({ text: text(d.text), ...align(d) }),
+  header: (d) => (text(d.text) ? { text: text(d.text), level: d.level === 3 ? 3 : 2, ...align(d) } : null),
   list: (d) => {
     const items = listItems(d.items);
     return items.length ? { style: ['ordered', 'checklist'].includes(d.style) ? d.style : 'unordered', items } : null;
   },
-  quote: (d) => (text(d.text) ? { text: text(d.text), caption: text(d.caption) } : null),
+  quote: (d) => (text(d.text) ? { text: text(d.text), caption: text(d.caption), ...align(d) } : null),
   delimiter: () => ({}),
   // Un aviso con icono: "💡 Llevar efectivo, no aceptan tarjeta".
   callout: (d) => (text(d.text) ? { emoji: plain(d.emoji, 8) || '💡', text: text(d.text) } : null),

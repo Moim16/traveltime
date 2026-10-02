@@ -7,7 +7,9 @@
 import { esc } from './ui.js';
 import { kindOf } from './pins.js';
 
-const INLINE = new Set(['B', 'I', 'MARK', 'A', 'BR', 'CODE', 'U', 'S']);
+const INLINE = new Set(['B', 'I', 'MARK', 'A', 'BR', 'CODE', 'U', 'S', 'SPAN']);
+// Los colores del texto y del resaltado: los mismos de api/_lib/story.js.
+export const COLORS = ['coral', 'amber', 'green', 'blue', 'violet'];
 
 // Reconstruye el texto con solo las etiquetas permitidas. El navegador parsea
 // (un <template> no ejecuta nada) y se vuelve a armar desde cero.
@@ -35,6 +37,15 @@ export function safeInline(html) {
             : walk(n);
           continue;
         }
+        const c = n.getAttribute('data-color');
+        if (tag === 'SPAN') {
+          out += COLORS.includes(c) ? `<span data-color="${c}">${walk(n)}</span>` : walk(n);
+          continue;
+        }
+        if (tag === 'MARK' && COLORS.includes(c)) {
+          out += `<mark data-color="${c}">${walk(n)}</mark>`;
+          continue;
+        }
         const t2 = tag.toLowerCase();
         out += `<${t2}>${walk(n)}</${t2}>`;
       }
@@ -54,6 +65,8 @@ function listHtml(style, items) {
     .join('')}</${tag}>`;
 }
 
+const center = (d) => (d.align === 'center' ? ' class="is-center"' : '');
+
 // ctx.photos: Map id -> foto (con urls); ctx.pins: Map id -> pin.
 // Una foto o un lugar que ya no estan (se borraron) simplemente no se muestran.
 export function renderStory(doc, { photos = new Map(), pins = new Map() } = {}) {
@@ -62,13 +75,13 @@ export function renderStory(doc, { photos = new Map(), pins = new Map() } = {}) 
     .map(({ type, data: d }) => {
       switch (type) {
         case 'paragraph':
-          return `<p>${safeInline(d.text)}</p>`;
+          return `<p${center(d)}>${safeInline(d.text)}</p>`;
         case 'header':
-          return d.level === 3 ? `<h4>${safeInline(d.text)}</h4>` : `<h3>${safeInline(d.text)}</h3>`;
+          return d.level === 3 ? `<h4${center(d)}>${safeInline(d.text)}</h4>` : `<h3${center(d)}>${safeInline(d.text)}</h3>`;
         case 'list':
           return listHtml(d.style, d.items ?? []);
         case 'quote':
-          return `<blockquote><p>${safeInline(d.text)}</p>${d.caption ? `<cite>${safeInline(d.caption)}</cite>` : ''}</blockquote>`;
+          return `<blockquote${center(d)}><p>${safeInline(d.text)}</p>${d.caption ? `<cite>${safeInline(d.caption)}</cite>` : ''}</blockquote>`;
         case 'delimiter':
           return '<hr class="delimiter">';
         case 'callout':

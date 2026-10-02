@@ -9,12 +9,13 @@
 
 import { esc, toast, ask } from './ui.js';
 import { kindOf } from './pins.js';
+import { ColorTool, AlignTune, toEditor, fromEditor } from './editor-tools.js';
 
 const V = '/vendor/editorjs';
 let libs = null;
 const loadLibs = () =>
   (libs ??= Promise.all(
-    ['editorjs', 'header', 'list', 'quote', 'delimiter', 'marker'].map((m) => import(`${V}/${m}.mjs`).then((x) => x.default)),
+    ['editorjs', 'header', 'list', 'quote', 'delimiter'].map((m) => import(`${V}/${m}.mjs`).then((x) => x.default)),
   ));
 
 const ICON = {
@@ -202,7 +203,7 @@ const I18N = {
     },
     toolNames: {
       Text: 'Texto', Heading: 'Título', 'Unordered List': 'Lista', 'Ordered List': 'Lista numerada', Checklist: 'Lista de tareas',
-      List: 'Lista', Quote: 'Cita', Delimiter: 'Separador', Marker: 'Resaltar', Bold: 'Negrita', Italic: 'Cursiva', Link: 'Enlace',
+      List: 'Lista', Quote: 'Cita', Delimiter: 'Separador', Color: 'Color', Centrar: 'Centrar', Bold: 'Negrita', Italic: 'Cursiva', Link: 'Enlace',
       Aviso: 'Aviso', Foto: 'Foto', Lugar: 'Lugar',
     },
     tools: {
@@ -319,24 +320,26 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
   title.addEventListener('input', () => (fit(), markDirty()));
   root.querySelectorAll('.writer-dates input').forEach((i) => i.addEventListener('change', markDirty));
 
-  const [EditorJS, Header, List, Quote, Delimiter, Marker] = await loadLibs();
+  const [EditorJS, Header, List, Quote, Delimiter] = await loadLibs();
   root.querySelector('#writer-editor').innerHTML = '';
   editor = new EditorJS({
     holder: 'writer-editor',
-    data: visit.body ?? { blocks: [] },
+    data: { blocks: toEditor(visit.body?.blocks) },
     placeholder: 'Cuenta qué hiciste… Toca + para agregar títulos, fotos, lugares o avisos.',
     autofocus: !visit.body?.blocks?.length,
     i18n: I18N,
-    inlineToolbar: ['bold', 'italic', 'marker', 'link'],
+    inlineToolbar: ['bold', 'italic', 'color', 'link'],
     tools: {
-      header: { class: Header, inlineToolbar: ['marker', 'link'], config: { levels: [2, 3], defaultLevel: 2, placeholder: 'Título' } },
+      paragraph: { inlineToolbar: true, tunes: ['align'] },
+      header: { class: Header, inlineToolbar: ['color', 'link'], tunes: ['align'], config: { levels: [2, 3], defaultLevel: 2, placeholder: 'Título' } },
       list: { class: List, inlineToolbar: true, config: { defaultStyle: 'unordered' } },
-      quote: { class: Quote, inlineToolbar: true },
+      quote: { class: Quote, inlineToolbar: true, tunes: ['align'] },
+      align: AlignTune,
       callout: { class: CalloutTool, inlineToolbar: true },
       photo: { class: PhotoTool, config: { photos, upload } },
       place: { class: PlaceTool, config: { pins, refresh: refreshPins } },
       delimiter: Delimiter,
-      marker: { class: Marker },
+      color: ColorTool,
     },
     onChange: markDirty,
   });
@@ -381,7 +384,7 @@ export async function openWriter({ visit, placeLabel, photos, pins, refreshPins,
         title: title.value,
         startDay: root.querySelector('[name=startDay]').value,
         endDay: root.querySelector('[name=endDay]').value,
-        body: { blocks: body.blocks },
+        body: { blocks: fromEditor(body.blocks) },
       });
       dirty = false;
       clearTimeout(draftTimer);
