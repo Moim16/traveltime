@@ -19,6 +19,7 @@
 // viaje recibe 404, igual que si no existiera.
 
 import { db, ensureSchema, nowIso } from './_lib/db.js';
+import { avatarOf } from './_lib/avatar.js';
 import { readJson, clean, cleanText, parseId } from './_lib/http.js';
 import { currentUser, deny, notYours } from './_lib/auth.js';
 import { TRIP_SELECT, tripCard, tripVisits, tripRole } from './_lib/trips.js';
@@ -31,12 +32,12 @@ const tripRow = async (id) => (await db.execute({ sql: `${TRIP_SELECT} WHERE t.i
 
 async function members(tripId) {
   const rs = await db.execute({
-    sql: `SELECT u.name, 'owner' role, 'accepted' status FROM trips t JOIN users u ON u.id = t.userId WHERE t.id = ?
+    sql: `SELECT u.name, u.avatar, u.googlePicture, 'owner' role, 'accepted' status FROM trips t JOIN users u ON u.id = t.userId WHERE t.id = ?
           UNION ALL
-          SELECT u.name, 'member', m.status FROM trip_members m JOIN users u ON u.id = m.userId WHERE m.tripId = ?`,
+          SELECT u.name, u.avatar, u.googlePicture, 'member', m.status FROM trip_members m JOIN users u ON u.id = m.userId WHERE m.tripId = ?`,
     args: [tripId, tripId],
   });
-  return rs.rows.map((r) => ({ name: r.name, role: r.role, status: r.status }));
+  return rs.rows.map((r) => ({ name: r.name, role: r.role, status: r.status, avatar: avatarOf(r) }));
 }
 
 async function fullTrip(id, me) {
