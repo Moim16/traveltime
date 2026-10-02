@@ -133,6 +133,17 @@ function placeChip(p, i) {
   </li>`;
 }
 
+// Una ciudad de lo recien publicado (aunque no tenga pines): se guarda en
+// "Quiero ir" o se marca como visitada, solo el lugar.
+function cityChip(c, i) {
+  const [name, ...rest] = (c.placeName ?? c.placeId).split(',').map((x) => x.trim());
+  return `<li class="place-chip reveal" style="--i:${i % 8};--k:var(--accent)">
+    <a href="#/p/${c.visitId}" class="place-chip-main">${c.cover ? `<img class="city-thumb" src="${esc(c.cover)}" alt="" loading="lazy">` : '<span class="pin-emoji">🏙️</span>'}
+      <span><b>${esc(name)}</b><small>${esc(rest.length ? rest[rest.length - 1] : '')} · @${esc(c.author)}</small></span></a>
+    <div class="place-chip-actions"><button class="chip-btn" data-want-city="${i}">♡ Quiero ir</button><button class="chip-btn" data-been-city="${i}">✓ Estuve</button></div>
+  </li>`;
+}
+
 // ---------- Portada ----------
 
 export async function renderHome({ go, countVisited, wishes, invites = () => [] }) {
@@ -219,16 +230,16 @@ export async function renderHome({ go, countVisited, wishes, invites = () => [] 
     return;
   }
   if (page?.el !== el) return;
-  const { recommendations: recs, places, stats } = data;
+  const { recommendations: recs, places, stats, cities = [] } = data;
   el.querySelector('#home-stats').textContent = stats.visits
     ? `${stats.visits} ${stats.visits === 1 ? 'historia publicada' : 'historias publicadas'} · ${stats.countries} ${stats.countries === 1 ? 'país' : 'países'} · ${stats.authors} ${stats.authors === 1 ? 'viajero' : 'viajeros'}`
     : '';
   el.querySelector('#home-recs').innerHTML = recs.length
     ? recs.map(cardHtml).join('')
     : `<div class="empty reveal"><span>🧭</span><p>Todavía no hay historias publicadas. ${me ? 'Publica una de tus visitas y será la primera.' : 'Crea tu cuenta y sé el primero en contar un viaje.'}</p></div>`;
-  el.querySelector('#home-places').innerHTML = places.length
-    ? places.map(placeChip).join('')
-    : '<li class="note">Cuando alguien publique una visita con lugares, aparecen aquí.</li>';
+  el.querySelector('#home-places').innerHTML = cities.length || places.length
+    ? cities.map(cityChip).join('') + places.map((p, i) => placeChip(p, i + cities.length)).join('')
+    : '<li class="note">Cuando alguien publique una visita, sus lugares aparecen aquí.</li>';
   const io2 = reveal(el);
   const prev = page.cleanup;
   page.cleanup = () => (prev?.(), io2?.disconnect());
@@ -240,6 +251,28 @@ export async function renderHome({ go, countVisited, wishes, invites = () => [] 
     if (want) {
       const w = await wantToGo({ pinId: Number(want.dataset.wantPin) });
       if (w) want.classList.add('done'), (want.textContent = '♥ En tu lista');
+      return;
+    }
+    const wantC = e.target.closest('[data-want-city]');
+    if (wantC) {
+      const c = cities[Number(wantC.dataset.wantCity)];
+      const w = await wantToGo({ placeId: c.placeId, placeName: c.placeName, visitId: c.visitId });
+      if (w) wantC.classList.add('done'), (wantC.textContent = '♥ En tu lista');
+      return;
+    }
+    const beenC = e.target.closest('[data-been-city]');
+    if (beenC) {
+      if (!(await needAccount('Crea tu cuenta para guardar los lugares donde estuviste.'))) return;
+      const c = cities[Number(beenC.dataset.beenCity)];
+      try {
+        await api('marks', { method: 'PUT', body: { placeId: c.placeId, on: true } });
+        beenC.classList.add('done');
+        beenC.textContent = '✓ Marcado';
+        toast(`${c.placeName.split(',')[0]} quedó en tu mapa ✓`);
+        changed();
+      } catch (ex) {
+        toast(ex.message, 'err');
+      }
       return;
     }
     const been = e.target.closest('[data-been-pin]');

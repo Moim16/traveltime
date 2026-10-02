@@ -1,6 +1,6 @@
 // Lo publicado: se lee sin cuenta. Solo GET.
 //
-//  GET /api/public?home=1           -> { recommendations, places, stats } para la portada
+//  GET /api/public?home=1           -> { recommendations, places, cities, stats } para la portada
 //  GET /api/public?feed=1&before=…  -> { visits, next } mas recomendaciones (paginado)
 //  GET /api/public?visit=12         -> { visit } una visita publicada completa
 //  GET /api/public?user=moim16      -> { profile, visits } perfil publico: "Sobre mi" y lo publicado
@@ -17,6 +17,7 @@ import { parseId, parsePlace } from './_lib/http.js';
 import { CARD_SELECT, publicCard, publishedVisit } from './_lib/public.js';
 import { tripVisits } from './_lib/trips.js';
 import { publicProfile } from './_lib/profile.js';
+import { signedUrl, imagesReady } from './_lib/images.js';
 
 const PAGE = 12;
 
@@ -32,6 +33,24 @@ async function recentPlaces(limit) {
   return rs.rows.map((p) => ({
     id: Number(p.id), name: p.name, kind: p.kind, lat: Number(p.lat), lng: Number(p.lng),
     visitId: Number(p.visitId), placeId: p.placeId, placeName: p.placeName, visitTitle: p.visitTitle, author: p.author,
+  }));
+}
+
+// Las ciudades de las visitas recien publicadas, una vez cada una (la visita mas
+// nueva de cada lugar): para "Ultimos lugares" aunque nadie haya marcado pines.
+async function recentCities(limit) {
+  const rs = await db.execute({
+    sql: `SELECT v.id visitId, v.placeId, v.placeName, v.title visitTitle, u.name author, v.publishedAt,
+                 (SELECT p.cfId FROM photos p WHERE p.visitId = v.id AND p.status = 'ready' ORDER BY p.position, p.id LIMIT 1) coverCfId
+          FROM visits v JOIN users u ON u.id = v.userId
+          WHERE v.publishedAt IS NOT NULL
+            AND v.publishedAt = (SELECT MAX(v2.publishedAt) FROM visits v2 WHERE v2.placeId = v.placeId AND v2.publishedAt IS NOT NULL)
+          ORDER BY v.publishedAt DESC LIMIT ?`,
+    args: [limit],
+  });
+  return rs.rows.map((v) => ({
+    placeId: v.placeId, placeName: v.placeName, visitId: Number(v.visitId), visitTitle: v.visitTitle, author: v.author,
+    cover: v.coverCfId && imagesReady() ? signedUrl(v.coverCfId, 'ttthumb') : null,
   }));
 }
 
@@ -105,16 +124,18 @@ export default async function handler(req, res) {
     }
 
     if (q.home) {
-      const [recs, places, stats] = await Promise.all([
+      const [recs, places, stats, cities] = await Promise.all([
         db.execute({ sql: `${CARD_SELECT} WHERE v.publishedAt IS NOT NULL ORDER BY v.publishedAt DESC LIMIT ?`, args: [PAGE] }),
         recentPlaces(16),
         db.execute(`SELECT COUNT(*) visits, COUNT(DISTINCT substr(placeId, 1, 3)) countries, COUNT(DISTINCT userId) authors
                     FROM visits WHERE publishedAt IS NOT NULL`),
+        recentCities(12),
       ]);
       const s = stats.rows[0];
       return res.status(200).json({
         recommendations: recs.rows.map(publicCard),
         places,
+        cities,
         stats: { visits: Number(s.visits), countries: Number(s.countries), authors: Number(s.authors) },
       });
     }
